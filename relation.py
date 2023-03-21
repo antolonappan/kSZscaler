@@ -17,12 +17,24 @@ class Scaling:
     @property
     def Mgas(self) -> np.ndarray:
         return np.array(self.dataframe['gas_frac'].values * \
-                        self.dataframe['m500c[Msol/h]'] / self.h)
+                        self.dataframe['m500c[Msol/h]'] / self.h) * u.M_sun
+    
+    @property
+    def Mstar(self) -> np.ndarray:
+        return np.array(self.dataframe['star_frac'].values * \
+                        self.dataframe['m500c[Msol/h]'] / self.h) * u.M_sun
+    @property
+    def Mhalo(self) -> np.ndarray:
+        return np.array(self.dataframe['m500c[Msol/h]'] / self.h) * u.M_sun
+    
+    @property
+    def Vlos(self) -> np.ndarray:
+        return np.abs(np.array(self.dataframe['vx[km/s]'])) * (u.km/u.s)
     
     def Yksz(self) -> np.ndarray:
         first = c.sigma_T/c.c
-        second = np.abs(np.array(self.dataframe['vx[km/s]'])) * (u.km/u.s)
-        third = (self.Mgas * u.M_sun).to('kg') / (c.m_p)
+        second = self.Vlos
+        third = self.Mgas.to('kg') / (c.m_p)
         return (first.to('cm s') * second.to('cm/s') * third).to('Mpc^2')
 
     def gas_halo_relation(self) -> None:
