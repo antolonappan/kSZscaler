@@ -99,6 +99,62 @@ class Scaling:
         plt.legend()
     
 
+class Distribution:
+
+    def __init__(self,vlos:str,grid:float,snap:str,box:str='') -> None:
+        self.vlos = vlos
+        self.grid = (grid * u.Mpc).to('kpc')
+        self.h = 0.6774
+        sim = Magneticum(snap,box)
+        self.dataframe = sim.dataframe
+        x = np.array(self.dataframe['x[kpc/h]'])/self.h * u.kpc
+        y = np.array(self.dataframe['y[kpc/h]'])/self.h * u.kpc
+        z = np.array(self.dataframe['z[kpc/h]'])/self.h * u.kpc
+        self.position = np.array([x,y,z])
+    
+    def get_axis(self) -> list:
+        if self.vlos == 'x':
+            sel = [1,2]
+        elif self.vlos == 'y':
+            sel = [0,2]
+        elif self.vlos == 'z':
+            sel = [0,1]
+        else:
+            raise ValueError('vlos must be x,y or z')
+        return sel
+
+    def get_grid_max_min(self) -> np.ndarray:
+        sel = self.get_axis()
+        smin = min(min(self.position[sel[0]]),min(self.position[sel[1]]))
+        smax = max(max(self.position[sel[0]]),max(self.position[sel[1]]))
+        return np.array([smin,smax])
+    
+    def get_grid(self) -> np.ndarray:
+        smin,smax = self.get_grid_max_min()
+        sdif = 1e10
+        arr = []
+        arr.append(smin)
+        while sdif > -1:
+            smin += self.grid.value
+            arr.append(smin)
+            sdif = smax-smin
+            print(sdif)
+        
+        return arr
+        
+
+
+    def plot(self) -> None:
+        sel = self.get_axis()
+        plt.figure(figsize=(15,15))
+        plt.scatter(self.position[sel[0]],self.position[sel[1]],s=1)
+        g = self.get_grid()
+        for i in g:
+            plt.axvline(i,c='r',lw=0.5)
+            plt.axhline(i,c='r',lw=0.5)
+
+
+
 
 
 
