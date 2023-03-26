@@ -4,7 +4,9 @@ from astropy import units as u
 import astropy.constants as c
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
-
+import pandas as pd
+from tqdm import tqdm
+from utils import cache_this
 class Scaling:
     
     def __init__(self,snap:str,box:str='') -> None:
@@ -138,20 +140,98 @@ class Distribution:
             smin += self.grid.value
             arr.append(smin)
             sdif = smax-smin
-            print(sdif)
         
         return arr
         
 
 
-    def plot(self) -> None:
+    def plot(self,cells:pd.DataFrame=None) -> None:
         sel = self.get_axis()
         plt.figure(figsize=(15,15))
         plt.scatter(self.position[sel[0]],self.position[sel[1]],s=1)
+        if cells is not None:
+            plt.scatter(cells[f'y[kpc/h]']/self.h,cells[f'z[kpc/h]']/self.h,s=4,c='k',alpha=0.6)
         g = self.get_grid()
         for i in g:
             plt.axvline(i,c='r',lw=0.5)
             plt.axhline(i,c='r',lw=0.5)
+
+    def get_cells_i(self,i:int) -> pd.DataFrame:
+        arr = self.get_grid()
+        sel = self.get_axis()
+        ax = ['x','y','z']
+        ax_min = arr[i]
+        ax_max = arr[i+1]
+        return self.dataframe[(self.dataframe[f'{ax[sel[0]]}[kpc/h]']/self.h > ax_min) & (self.dataframe[f'{ax[sel[0]]}[kpc/h]']/self.h < ax_max)]
+
+    
+    def get_cell_ij(self,i:int,j:int) -> pd.DataFrame:
+        arr = self.get_grid()
+        sel = self.get_axis()
+        ax = ['x','y','z']
+        ax_min = arr[j]
+        ax_max = arr[j+1]
+        df = self.get_cells_i(i)
+        return df[(df[f'{ax[sel[1]]}[kpc/h]']/self.h > ax_min) & (df[f'{ax[sel[1]]}[kpc/h]']/self.h < ax_max)]
+    
+    def cell_avg_mass(self,i:int,j:int) -> u.M_sun:
+        df = self.get_cell_ij(i,j)
+        m = df['m500c[Msol/h]']/self.h
+        if len(m) == 0:
+            return 0*u.M_sun
+        return np.mean(m)*u.M_sun
+    
+    @cache_this('/home/anto/scratch')
+    def cells_avg_mass(self) -> u.M_sun:
+        arr = self.get_grid()
+        arr = arr[:-1]
+        mass = []
+        for i in tqdm(range(len(arr)),desc='Calculating mass of cells in y direction rows',unit='row',position=0):
+            for j in tqdm(range(len(arr)),desc='Calculating mass of cells in z direction columns',unit='cell',position=1,leave=False):
+                mass.append(self.cell_avg_mass(i,j).value)
+        return np.mean(mass)*u.M_sun
+    
+    def cell_number(self,i:int,j:int) -> int:
+        df = self.get_cell_ij(i,j)
+        return len(df)
+    
+    @cache_this('/home/anto/scratch')
+    def cells_number(self) -> int:
+        arr = self.get_grid()
+        arr = arr[:-1]
+        number = []
+        for i in tqdm(range(len(arr)),desc='Calculating number of cells in y direction rows',unit='row',position=0):
+            for j in tqdm(range(len(arr)),desc='Calculating number of cells in z direction columns',unit='cell',position=1,leave=False):
+                number.append(self.cell_number(i,j))
+        return np.mean(number)
+    
+    def cell_mass_density(self,i:int,j:int) -> float:
+        m_i = self.cell_avg_mass(i,j)
+        m = self.cells_avg_mass()
+        return ( m_i-m)/m 
+    
+    def cell_number_density(self,i:int,j:int) -> float:
+        n_i = self.cell_number(i,j)
+        n = self.cells_number()
+        return (n_i-n)/n
+    
+    def add_density(self) -> pd.DataFrame:
+        mass_den = np.zeros(len(self.dataframe))
+        numb_den = np.zeros(len(self.dataframe))
+        arr = self.get_grid()
+        arr = arr[:-1]
+        for i in tqdm(range(len(arr)),desc='Calculating mass of cells in y direction rows',unit='row',position=0):
+            for j in tqdm(range(len(arr)),desc='Calculating mass of cells in z direction columns',unit='cell',position=1,leave=False):
+                _df_ = self.get_cell_ij(i,j)
+                mass_den[list(_df_.index)] = np.ones(len(_df_))*self.cell_mass_density(i,j)
+                numb_den[list(_df_.index)] = np.ones(len(_df_))*self.cell_number_density(i,j)
+        self.dataframe['mass_density'] = mass_den
+        self.dataframe['number_density'] = numb_den
+        return self.dataframe
+    
+
+    
+
 
 
 
