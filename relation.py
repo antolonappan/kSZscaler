@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 import pandas as pd
 from tqdm import tqdm
-from utils import cache_this
+from pycachera import cache
 class Scaling:
     
     def __init__(self,snap:str,box:str='') -> None:
@@ -181,7 +181,7 @@ class Distribution:
             return 0*u.M_sun
         return np.mean(m)*u.M_sun
     
-    @cache_this('/home/anto/scratch')
+    @cache('/home/anto/scratch')
     def cells_avg_mass(self) -> u.M_sun:
         arr = self.get_grid()
         arr = arr[:-1]
@@ -195,7 +195,7 @@ class Distribution:
         df = self.get_cell_ij(i,j)
         return len(df)
     
-    @cache_this('/home/anto/scratch')
+    @cache('/home/anto/scratch')
     def cells_number(self) -> int:
         arr = self.get_grid()
         arr = arr[:-1]
@@ -215,7 +215,8 @@ class Distribution:
         n = self.cells_number()
         return (n_i-n)/n
     
-    def add_density(self) -> pd.DataFrame:
+    @cache('/home/anto/scratch')
+    def get_density(self) -> tuple:
         mass_den = np.zeros(len(self.dataframe))
         numb_den = np.zeros(len(self.dataframe))
         arr = self.get_grid()
@@ -225,9 +226,13 @@ class Distribution:
                 _df_ = self.get_cell_ij(i,j)
                 mass_den[list(_df_.index)] = np.ones(len(_df_))*self.cell_mass_density(i,j)
                 numb_den[list(_df_.index)] = np.ones(len(_df_))*self.cell_number_density(i,j)
+        return (mass_den,numb_den)
+    
+    def add_density(self) -> None:
+        mass_den,numb_den = self.get_density()
         self.dataframe['mass_density'] = mass_den
         self.dataframe['number_density'] = numb_den
-        return self.dataframe
+        print('Density data added to dataframe')
     
 
     
