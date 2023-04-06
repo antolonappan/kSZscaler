@@ -208,12 +208,12 @@ class Distribution:
     def cell_mass_density(self,i:int,j:int) -> float:
         m_i = self.cell_avg_mass(i,j)
         m = self.cells_avg_mass()
-        return ( m_i-m)/m 
+        return m_i/m 
     
     def cell_number_density(self,i:int,j:int) -> float:
         n_i = self.cell_number(i,j)
         n = self.cells_number()
-        return (n_i-n)/n
+        return n_i/n
     
     @cache('/home/anto/scratch')
     def get_density(self) -> tuple:
@@ -236,6 +236,7 @@ class Distribution:
     
 
     
+
 
 
 
