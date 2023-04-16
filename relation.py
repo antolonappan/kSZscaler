@@ -106,6 +106,7 @@ class Distribution:
     def __init__(self,vlos:str,grid:float,snap:str,box:str='') -> None:
         self.vlos = vlos
         self.grid = (grid * u.Mpc).to('kpc')
+        self._grid_ = self.grid.value
         self.h = 0.6774
         sim = Magneticum(snap,box)
         self.dataframe = sim.dataframe
@@ -125,14 +126,18 @@ class Distribution:
             raise ValueError('vlos must be x,y or z')
         return sel
 
-    def get_grid_max_min(self) -> np.ndarray:
-        sel = self.get_axis()
-        smin = min(min(self.position[sel[0]]),min(self.position[sel[1]]))
-        smax = max(max(self.position[sel[0]]),max(self.position[sel[1]]))
+    def get_grid_max_min(self,cube:bool=False) -> np.ndarray:
+        if not cube:
+            sel = self.get_axis()
+            smin = min(min(self.position[sel[0]]),min(self.position[sel[1]]))
+            smax = max(max(self.position[sel[0]]),max(self.position[sel[1]]))
+        else:
+            smin = min(min(self.position[0]),min(self.position[1]),min(self.position[2]))
+            smax = max(max(self.position[0]),max(self.position[1]),max(self.position[2]))
         return np.array([smin,smax])
     
-    def get_grid(self) -> np.ndarray:
-        smin,smax = self.get_grid_max_min()
+    def get_grid(self,cube:bool=False) -> np.ndarray:
+        smin,smax = self.get_grid_max_min(cube)
         sdif = 1e10
         arr = []
         arr.append(smin)
@@ -163,6 +168,71 @@ class Distribution:
         ax_min = arr[i]
         ax_max = arr[i+1]
         return self.dataframe[(self.dataframe[f'{ax[sel[0]]}[kpc/h]']/self.h > ax_min) & (self.dataframe[f'{ax[sel[0]]}[kpc/h]']/self.h < ax_max)]
+    
+    def get_cube_ijk(self,i:int,j:int,k:int) -> pd.DataFrame:
+        arr = self.get_grid(True)
+        ax_min,ax_max = arr[i],arr[i+1]
+        ay_min,ay_max = arr[j],arr[j+1]
+        az_min,az_max = arr[k],arr[k+1]
+        return self.dataframe[(self.dataframe['x[kpc/h]']/self.h > ax_min) & 
+                              (self.dataframe['x[kpc/h]']/self.h < ax_max) &
+                              (self.dataframe['y[kpc/h]']/self.h > ay_min) & 
+                              (self.dataframe['y[kpc/h]']/self.h < ay_max) & 
+                              (self.dataframe['z[kpc/h]']/self.h > az_min) & 
+                              (self.dataframe['z[kpc/h]']/self.h < az_max)]
+
+    def cube_data(self,i:int,j:int,k:int) -> list:
+        df = self.get_cube_ijk(i,j,k)
+        ind = list(df.index)
+        m = np.mean(df['m500c[Msol/h]']/self.h)
+        n = len(df)
+        if n == 0:
+            m = 0 * u.M_sun
+        return [m,n,ind]
+    
+    @cache('/home/anto/scratch',extrarg=['_grid_'])
+    def data_3d(self):
+        arr = self.get_grid(True)
+        ngrid = len(arr)-1
+        label = np.zeros(len(self.dataframe)).astype(str)
+        data = {}
+        for i in tqdm(range(ngrid),desc='Calculating data',unit='cube'):
+            for j in range(ngrid):
+                for k in range(ngrid):
+                    m,n,ind = self.cube_data(i,j,k)
+                    cube = f"{i}{j}{k}"
+                    data[cube] = (m,n)
+                    label[ind] = cube
+        self.dataframe['cube'] = label
+        return data
+    
+    def cube_avg_quantity(self):
+        data = self.data_3d()
+        mass, no = [], []
+        for i in tqdm(list(data.keys()),desc='Calculating density',unit='cube'):
+            mass.append(data[i][0])
+            no.append(data[i][1])
+        mass, no = np.array(mass),np.array(no)
+        mass_mask = mass == 0
+        no_mask = no == 0
+        masked_mass = np.ma.masked_array(mass,mass_mask)
+        masked_no = np.ma.masked_array(no,no_mask)
+        return masked_mass.mean(),masked_no.mean()
+    
+    def cube_density(self):
+        mass_mean,no_mean = self.cube_avg_quantity()
+        data = self.data_3d()
+        mass_dens = np.zeros(len(self.dataframe))
+        no_dens = np.zeros(len(self.dataframe))
+        cube = list(self.dataframe['cube'])
+        for ind, key  in tqdm(enumerate(cube),desc='Calculating density',unit='cube'):
+            print(key)
+            mass_dens[ind] = data[str(key)][0]/mass_mean
+            no_dens[ind] = data[str(key)][1]/no_mean
+        self.dataframe['mass_dens'] = mass_dens
+        self.dataframe['no_dens'] = no_dens
+            
+
 
     
     def get_cell_ij(self,i:int,j:int) -> pd.DataFrame:
