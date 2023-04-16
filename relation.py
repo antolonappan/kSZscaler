@@ -174,11 +174,11 @@ class Distribution:
         ax_min,ax_max = arr[i],arr[i+1]
         ay_min,ay_max = arr[j],arr[j+1]
         az_min,az_max = arr[k],arr[k+1]
-        return self.dataframe[(self.dataframe['x[kpc/h]']/self.h > ax_min) & 
+        return self.dataframe[(self.dataframe['x[kpc/h]']/self.h >= ax_min) & 
                               (self.dataframe['x[kpc/h]']/self.h < ax_max) &
-                              (self.dataframe['y[kpc/h]']/self.h > ay_min) & 
+                              (self.dataframe['y[kpc/h]']/self.h >= ay_min) & 
                               (self.dataframe['y[kpc/h]']/self.h < ay_max) & 
-                              (self.dataframe['z[kpc/h]']/self.h > az_min) & 
+                              (self.dataframe['z[kpc/h]']/self.h >= az_min) & 
                               (self.dataframe['z[kpc/h]']/self.h < az_max)]
 
     def cube_data(self,i:int,j:int,k:int) -> list:
@@ -190,11 +190,11 @@ class Distribution:
             m = 0 * u.M_sun
         return [m,n,ind]
     
-    @cache('/home/anto/scratch',extrarg=['_grid_'])
+    
     def data_3d(self):
         arr = self.get_grid(True)
         ngrid = len(arr)-1
-        label = np.zeros(len(self.dataframe)).astype(str)
+        label = np.ones(len(self.dataframe)).astype(str)
         data = {}
         for i in tqdm(range(ngrid),desc='Calculating data',unit='cube'):
             for j in range(ngrid):
@@ -226,7 +226,6 @@ class Distribution:
         no_dens = np.zeros(len(self.dataframe))
         cube = list(self.dataframe['cube'])
         for ind, key  in tqdm(enumerate(cube),desc='Calculating density',unit='cube'):
-            print(key)
             mass_dens[ind] = data[str(key)][0]/mass_mean
             no_dens[ind] = data[str(key)][1]/no_mean
         self.dataframe['mass_dens'] = mass_dens
