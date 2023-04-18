@@ -9,11 +9,12 @@ from tqdm import tqdm
 from pycachera import cache
 class Scaling:
     
-    def __init__(self,snap:str,box:str='') -> None:
+    def __init__(self,snap:str,box:str='',body:str='cluster') -> None:
         self.dataframe = Magneticum(snap,box).dataframe
         self.snap = snap
         self.box = box
-        self.z = Magneticum.redshift_snapshot(snap,box)
+        self.body = body
+        self.z = Magneticum.redshift_snapshot(snap,box,body)
         self.h = 0.6774
 
     @property
@@ -108,8 +109,8 @@ class Distribution:
         self.grid = (grid * u.Mpc).to('kpc')
         self._grid_ = self.grid.value
         self.h = 0.6774
-        sim = Magneticum(snap,box)
-        self.dataframe = sim.dataframe
+        self.dataframe = Magneticum(snap,box,'cluster').dataframe
+        self.dataframe_gal = Magneticum(snap,box,'galaxies').dataframe
         x = np.array(self.dataframe['x[kpc/h]'])/self.h * u.kpc
         y = np.array(self.dataframe['y[kpc/h]'])/self.h * u.kpc
         z = np.array(self.dataframe['z[kpc/h]'])/self.h * u.kpc
@@ -169,67 +170,126 @@ class Distribution:
         ax_max = arr[i+1]
         return self.dataframe[(self.dataframe[f'{ax[sel[0]]}[kpc/h]']/self.h > ax_min) & (self.dataframe[f'{ax[sel[0]]}[kpc/h]']/self.h < ax_max)]
     
-    def get_cube_ijk(self,i:int,j:int,k:int) -> pd.DataFrame:
+    def get_cube_ijk(self,i:int,j:int,k:int,body:str='cluster') -> pd.DataFrame:
+        if body == 'cluster':
+            dataframe = self.dataframe
+        elif body == 'galaxies':
+            dataframe = self.dataframe_gal
+        else:
+            raise ValueError('body must be cluster or galaxies')
+        
         arr = self.get_grid(True)
         ax_min,ax_max = arr[i],arr[i+1]
         ay_min,ay_max = arr[j],arr[j+1]
         az_min,az_max = arr[k],arr[k+1]
-        return self.dataframe[(self.dataframe['x[kpc/h]']/self.h >= ax_min) & 
-                              (self.dataframe['x[kpc/h]']/self.h < ax_max) &
-                              (self.dataframe['y[kpc/h]']/self.h >= ay_min) & 
-                              (self.dataframe['y[kpc/h]']/self.h < ay_max) & 
-                              (self.dataframe['z[kpc/h]']/self.h >= az_min) & 
-                              (self.dataframe['z[kpc/h]']/self.h < az_max)]
+        return dataframe[(dataframe['x[kpc/h]']/self.h >= ax_min) & 
+                         (dataframe['x[kpc/h]']/self.h < ax_max) &
+                         (dataframe['y[kpc/h]']/self.h >= ay_min) & 
+                         (dataframe['y[kpc/h]']/self.h < ay_max) & 
+                         (dataframe['z[kpc/h]']/self.h >= az_min) & 
+                         (dataframe['z[kpc/h]']/self.h < az_max)]
 
-    def cube_data(self,i:int,j:int,k:int) -> list:
-        df = self.get_cube_ijk(i,j,k)
+    def cube_data(self,i:int,j:int,k:int,body:str='cluster') -> list:
+        df = self.get_cube_ijk(i,j,k,body)
         ind = list(df.index)
-        m = np.mean(df['m500c[Msol/h]']/self.h)
         n = len(df)
         if n == 0:
-            m = 0 * u.M_sun
+            m = 0 
+        else:
+            if body == 'cluster':
+                m = np.array(df['m500c[Msol/h]']/self.h) * u.Msun
+                m = m.to(u.kg)
+                m = m.value
+                m = m.mean()
+            elif body == 'galaxies':
+                m = np.array(df['m[Msol/h]']/self.h) * u.Msun
+                m = m.to(u.kg)
+                m = m.value
+                m = m.mean()
         return [m,n,ind]
     
-    
-    def data_3d(self):
+    @cache(extrarg=["_grid_"])
+    def __data_3d__(self):
         arr = self.get_grid(True)
         ngrid = len(arr)-1
         label = np.ones(len(self.dataframe)).astype(str)
         data = {}
-        for i in tqdm(range(ngrid),desc='Calculating data',unit='cube'):
+        data['cluster'] = {}
+        data['galaxies'] = {}
+        for i in tqdm(range(ngrid),desc='Calculating mass and no in cubes',unit='plane of cubes'):
             for j in range(ngrid):
                 for k in range(ngrid):
-                    m,n,ind = self.cube_data(i,j,k)
                     cube = f"{i}{j}{k}"
-                    data[cube] = (m,n)
+                    mc,nc,ind = self.cube_data(i,j,k)
+                    mg,ng,_ = self.cube_data(i,j,k,'galaxies')
+                    data['cluster'][cube] = (mc,nc)
+                    data['galaxies'][cube] = (mg,ng)
                     label[ind] = cube
+        return (data,label)
+    
+    def data_3d(self):
+        data , label = self.__data_3d__()
         self.dataframe['cube'] = label
         return data
+
+    def ___masked_mean__(self,arr:np.ndarray) -> float:
+        mask = arr == 0
+        masked_arr = np.ma.masked_array(arr,mask)
+        return masked_arr.mean()
     
+
     def cube_avg_quantity(self):
         data = self.data_3d()
-        mass, no = [], []
-        for i in tqdm(list(data.keys()),desc='Calculating density',unit='cube'):
-            mass.append(data[i][0])
-            no.append(data[i][1])
-        mass, no = np.array(mass),np.array(no)
-        mass_mask = mass == 0
-        no_mask = no == 0
-        masked_mass = np.ma.masked_array(mass,mass_mask)
-        masked_no = np.ma.masked_array(no,no_mask)
-        return masked_mass.mean(),masked_no.mean()
+        massc, noc = [], []
+        massg, nog = [], []
+        assert (data['cluster'].keys() == data['galaxies'].keys()), 'Something went wrong'
+        keys = list(data['cluster'].keys())
+        for i in tqdm(keys,desc='Calculating average qualities',unit='plane of cubes'):
+            massc.append(data['cluster'][i][0])
+            noc.append(data['cluster'][i][1])
+            massg.append(data['galaxies'][i][0])
+            nog.append(data['galaxies'][i][1])
+    
+
+
+        mass_c, no_c = np.array(massc),np.array(noc)
+        mass_g, no_g = np.array(massg),np.array(nog)
+
+        
+
+        mean_mass_c = self.___masked_mean__(mass_c)
+        mean_mass_g = self.___masked_mean__(mass_g)
+        mean_no_c = self.___masked_mean__(no_c)
+        mean_no_g = self.___masked_mean__(no_g)
+
+        data = {}
+        data['cluster'] = (mean_mass_c,mean_no_c)
+        data['galaxies'] = (mean_mass_g,mean_no_g)
+
+        return data
     
     def cube_density(self):
-        mass_mean,no_mean = self.cube_avg_quantity()
-        data = self.data_3d()
-        mass_dens = np.zeros(len(self.dataframe))
-        no_dens = np.zeros(len(self.dataframe))
+        mean_qualities = self.cube_avg_quantity()
+        mass_c_mean, no_c_mean = mean_qualities['cluster']
+        mass_g_mean, no_g_mean = mean_qualities['galaxies']
+        data_generic = self.data_3d()
+        data_c = data_generic['cluster']
+        data_g = data_generic['galaxies']
+        mass_c_dens = np.zeros(len(self.dataframe))
+        no_c_dens = np.zeros(len(self.dataframe))
+        mass_g_dens = np.zeros(len(self.dataframe))
+        no_g_dens = np.zeros(len(self.dataframe))
         cube = list(self.dataframe['cube'])
-        for ind, key  in tqdm(enumerate(cube),desc='Calculating density',unit='cube'):
-            mass_dens[ind] = data[str(key)][0]/mass_mean
-            no_dens[ind] = data[str(key)][1]/no_mean
-        self.dataframe['mass_dens'] = mass_dens
-        self.dataframe['no_dens'] = no_dens
+        for ind in tqdm(range(len(cube)),desc='Calculating cluster and galaxy densities',unit='plane of cubes'):
+            key = cube[ind]
+            mass_c_dens[ind] = data_c[str(key)][0]/mass_c_mean
+            no_c_dens[ind] = data_c[str(key)][1]/no_c_mean
+            mass_g_dens[ind] = data_g[str(key)][0]/mass_g_mean
+            no_g_dens[ind] = data_g[str(key)][1]/no_g_mean
+        self.dataframe['mass_c_dens'] = mass_c_dens
+        self.dataframe['no_c_dens'] = no_c_dens
+        self.dataframe['mass_g_dens'] = mass_g_dens
+        self.dataframe['no_g_dens'] = no_g_dens
             
 
 
