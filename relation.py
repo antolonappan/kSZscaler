@@ -10,11 +10,11 @@ from pycachera import cache
 class Scaling:
     
     def __init__(self,snap:str,box:str='',body:str='cluster') -> None:
-        self.dataframe = Magneticum(snap,box).dataframe
+        self.dataframe = Magneticum(snap,box,body).dataframe
         self.snap = snap
         self.box = box
         self.body = body
-        self.z = Magneticum.redshift_snapshot(snap,box,body)
+        self.z = Magneticum.redshift_snapshot(snap,box)
         self.h = 0.6774
 
     @property
@@ -73,7 +73,7 @@ class Scaling:
         plt.scatter(M,Y,s=0.3)
         plt.semilogy()
         plt.semilogx()
-        plt.xlabel(f'Mgas (${M.unit}$)')
+        plt.xlabel(f'M500c (${M.unit}$)')
         plt.ylabel(f'Yksz (${Y.unit}$)')
         plt.title('Yksz vs M500c')
         plt.show()
@@ -104,8 +104,7 @@ class Scaling:
 
 class Distribution:
 
-    def __init__(self,vlos:str,grid:float,snap:str,box:str='') -> None:
-        self.vlos = vlos
+    def __init__(self,grid:float,snap:str,box:str='') -> None:
         self.grid = (grid * u.Mpc).to('kpc')
         self._grid_ = self.grid.value
         self.h = 0.7
