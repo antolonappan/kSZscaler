@@ -108,21 +108,29 @@ class Distribution:
         self.vlos = vlos
         self.grid = (grid * u.Mpc).to('kpc')
         self._grid_ = self.grid.value
-        self.h = 0.6774
-        self.dataframe = Magneticum(snap,box,'cluster').dataframe
+        self.h = 0.7
+        self.dataframe_clu = Magneticum(snap,box,'cluster').dataframe
         self.dataframe_gal = Magneticum(snap,box,'galaxies').dataframe
-        x = np.array(self.dataframe['x[kpc/h]'])/self.h * u.kpc
-        y = np.array(self.dataframe['y[kpc/h]'])/self.h * u.kpc
-        z = np.array(self.dataframe['z[kpc/h]'])/self.h * u.kpc
-        xgal = np.array(self.dataframe_gal['x[kpc/h]'])/self.h * u.kpc
-        ygal = np.array(self.dataframe_gal['y[kpc/h]'])/self.h * u.kpc
-        zgal = np.array(self.dataframe_gal['z[kpc/h]'])/self.h * u.kpc
-        self.position = np.array([x,y,z])
-        self.position_gal = np.array([xgal,ygal,zgal])
+        self.dataframe = self.calculate_number_density()
+    
+    def __modify_dataframe_cluster__(self):
+        dataframe = pd.DataFrame.from_dict({'x':self.dataframe_clu['x[kpc/h]']/self.h,
+                                            'y':self.dataframe_clu['y[kpc/h]']/self.h,
+                                            'z':self.dataframe_clu['z[kpc/h]']/self.h,})
+        dataframe['m500c[Msol]'] = self.dataframe_clu['m500c[Msol/h]']/self.h
+        dataframe['Veff'] = np.sqrt(self.dataframe_clu['vx[km/s]']**2 + self.dataframe_clu['vy[km/s]']**2 + self.dataframe_clu['vz[km/s]']**2)
+        return dataframe
+
+    def __modify_dataframe_galaxies__(self):
+        dataframe = pd.DataFrame.from_dict({'x':self.dataframe_gal['x[kpc/h]']/self.h,
+                                            'y':self.dataframe_gal['y[kpc/h]']/self.h,
+                                            'z':self.dataframe_gal['z[kpc/h]']/self.h,})
+        return dataframe
+
     
     def calculate_number_density(self):
-        data = pd.DataFrame.from_dict({'x':self.position[0],'y':self.position[1],'z':self.position[2]})
-        data1 = pd.DataFrame.from_dict({'x':self.position_gal[0],'y':self.position_gal[1],'z':self.position_gal[2]})
+        data = self.__modify_dataframe_cluster__()
+        data1 = self.__modify_dataframe_galaxies__()
 
 
         cube_size = self.grid.value
@@ -177,6 +185,8 @@ class Distribution:
 
         # Associate the number density with each galaxy cluster in the data
         data = data.merge(galaxies_per_cube[['cube_id', 'galaxy_number_density']], on='cube_id', how='left')
+
+        data = data.drop(['cube_x', 'cube_y', 'cube_z', 'cube_id'], axis=1)
 
         return data
         
