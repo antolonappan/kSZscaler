@@ -11,11 +11,13 @@ class Magneticum:
     class to download and read Magneticum data
     """
 
-    def __init__(self,snap:str,box:str=''):
+    def __init__(self,snap:str,box:str='',body:str='cluster'):
         self.snap = snap
         self.box = box
-        self.fname = self.__datafile__(f'{self.snap}{self.box}.txt' )
-        self.link = f"http://wwwmpa.mpa-garching.mpg.de/HydroSims/Magneticum/Downloads/Magneticum/Box2{box}_hr/snap_{int(snap)}/cluster.txt.gz"
+        self.body = body
+        assert (self.body in ['cluster', 'galaxies']), "body should be either 'cluster' or 'galaxies"
+        self.fname = self.__datafile__(f'{body}{self.snap}{self.box}.txt' )
+        self.link = f"http://wwwmpa.mpa-garching.mpg.de/HydroSims/Magneticum/Downloads/Magneticum/Box2{box}_hr/snap_{int(snap)}/{body}.txt.gz"
     
     def __datafile__(self,fname:str) -> str:
         dir_base = os.path.dirname(os.path.realpath(__file__))
