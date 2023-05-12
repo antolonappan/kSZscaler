@@ -15,7 +15,7 @@ class Scaling:
         self.box = box
         self.body = body
         self.z = Magneticum.redshift_snapshot(snap,box)
-        self.h = 0.6774
+        self.h = 0.7
 
     @property
     def Mgas(self) -> np.ndarray:
@@ -116,7 +116,7 @@ class Distribution:
         dataframe = pd.DataFrame.from_dict({'x':self.dataframe_clu['x[kpc/h]']/self.h,
                                             'y':self.dataframe_clu['y[kpc/h]']/self.h,
                                             'z':self.dataframe_clu['z[kpc/h]']/self.h,})
-        dataframe['m500c[Msol]'] = self.dataframe_clu['m500c[Msol/h]']/self.h
+        #dataframe['m500c[Msol]'] = self.dataframe_clu['m500c[Msol/h]']/self.h
         dataframe['Veff'] = np.sqrt(self.dataframe_clu['vx[km/s]']**2 + self.dataframe_clu['vy[km/s]']**2 + self.dataframe_clu['vz[km/s]']**2)
         return dataframe
 
@@ -188,18 +188,28 @@ class Distribution:
         data = data.drop(['cube_x', 'cube_y', 'cube_z', 'cube_id'], axis=1)
 
         return data
-        
-
-        
-
-        
 
 
+class Analysis:
+
+    def __init__(self,grid:list,snap:str,box:str):
+        self.scaling = Scaling(snap,box,'cluster')
+        self.distribution_clu = Distribution(grid[0],snap,box)
+        self.distribution_gal = Distribution(grid[1],snap,box)
+
+    def get_dataframe(self):
+        df_c = self.distribution_clu.dataframe
+        df_g = self.distribution_gal.dataframe
+
+        df_c['galaxy_number_density'] = df_g['galaxy_number_density']
+        df_c['num_galaxies'] = df_g['num_galaxies']
+
+        df_c['Mstar'] = self.scaling.Mstar.value
+        df_c['Mgas'] = self.scaling.Mgas.value
+        df_c['Vlos'] = self.scaling.Vlos.value
+        Y,M = self.scaling.Y_M()
+        df_c['Y'] = np.log(Y.value)
+        df_c['M'] = np.log(M.value)
 
 
-
-
-
-
-        
-
+        return df_c
