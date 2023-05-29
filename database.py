@@ -17,7 +17,7 @@ class Magneticum:
         self.body = body
         assert (self.body in ['cluster', 'galaxies']), "body should be either 'cluster' or 'galaxies"
         self.fname = self.__datafile__(f'{body}{self.snap}{self.box}.txt' )
-        self.link = f"http://wwwmpa.mpa-garching.mpg.de/HydroSims/Magneticum/Downloads/Magneticum/Box2{box}_hr/snap_{int(snap)}/{body}.txt.gz"
+        self.link = f"http://wwwmpa.mpa-garching.mpg.de/HydroSims/Magneticum/Downloads/Magneticum/Box2{box}_hr/snap_{snap}/{body}.txt.gz"
     
     def __datafile__(self,fname:str) -> str:
         dir_base = os.path.dirname(os.path.realpath(__file__))

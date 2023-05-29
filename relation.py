@@ -79,7 +79,7 @@ class Scaling:
         plt.show()
 
     def power_law(self,x,a,b):
-        return a*x**b
+        return a*x + b
     
     def Y_M_fit(self) -> tuple:
         Y,M = self.Y_M()
@@ -98,7 +98,7 @@ class Scaling:
         plt.xlabel(f'Mgas (${M.unit}$)')
         plt.ylabel(f'Yksz (${Y.unit}$)')
         plt.title('Yksz vs M500c')
-        plt.plot(M,yfit_log,label=f"$\\alpha$={popt[1]:.2f}",c='r')
+        plt.plot(M,yfit_log,label=f"$\\alpha$={popt[0]:.2f}",c='r')
         plt.legend()
     
 
