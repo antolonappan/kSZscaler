@@ -110,7 +110,7 @@ class Distribution:
         self.h = 0.7
         self.dataframe_clu = Magneticum(snap,box,'cluster').dataframe
         self.dataframe_gal = Magneticum(snap,box,'galaxies').dataframe
-        self.dataframe = self.calculate_number_density()
+        self.dataframe = self.calculate()
     
     def __modify_dataframe_cluster__(self):
         dataframe = pd.DataFrame.from_dict({'x':self.dataframe_clu['x[kpc/h]']/self.h,
@@ -126,24 +126,17 @@ class Distribution:
                                             'z':self.dataframe_gal['z[kpc/h]']/self.h,})
         return dataframe
 
-    
-    def calculate_number_density(self):
-        data = self.__modify_dataframe_cluster__()
-        data1 = self.__modify_dataframe_galaxies__()
-
-
+        
+    def calculate_cube_indices(self, dataframe):
         cube_size = self.grid.value
-        # Calculate the minimum and maximum coordinates for each axis in the cluster data
-        min_x, max_x = data['x'].min(), data['x'].max()
-        min_y, max_y = data['y'].min(), data['y'].max()
-        min_z, max_z = data['z'].min(), data['z'].max()
-
-        # Calculate the number of cubes along each axis
+        min_x, max_x = dataframe['x'].min(), dataframe['x'].max()
+        min_y, max_y = dataframe['y'].min(), dataframe['y'].max()
+        min_z, max_z = dataframe['z'].min(), dataframe['z'].max()
         num_cubes_x = int(np.ceil((max_x - min_x) / cube_size))
         num_cubes_y = int(np.ceil((max_y - min_y) / cube_size))
         num_cubes_z = int(np.ceil((max_z - min_z) / cube_size))
+        print(num_cubes_x)
 
-        # Function to calculate cube indices and unique cube ID
         def assign_cube_ids(df):
             df['cube_x'] = np.floor((df['x'] - min_x) / cube_size).astype(int)
             df['cube_y'] = np.floor((df['y'] - min_y) / cube_size).astype(int)
@@ -152,43 +145,63 @@ class Distribution:
                             df['cube_y'] * num_cubes_z +
                             df['cube_z'])
             return df
-
-        # Assign cube IDs to both galaxy clusters and galaxy data
-        data = assign_cube_ids(data)
-        data1 = assign_cube_ids(data1)
-
-        # Calculate the number of galaxy clusters in each cube
-        clusters_per_cube = data.groupby('cube_id').size().reset_index(name='num_clusters')
-
-        # Calculate the mean number of galaxy clusters in all cubes
+        
+        dataframe = assign_cube_ids(dataframe)
+        return dataframe, num_cubes_x, num_cubes_y, num_cubes_z
+    
+    def add_cluster_ratio(self, dataframe):
+        clusters_per_cube = dataframe.groupby('cube_id').size().reset_index(name='num_clusters')
         mean_num_clusters = clusters_per_cube['num_clusters'].mean()
+        clusters_per_cube['cluster_number_ratio'] = clusters_per_cube['num_clusters'] / mean_num_clusters
+        dataframe = dataframe.merge(clusters_per_cube[['cube_id', 'cluster_number_ratio']], on='cube_id', how='left')
+        return dataframe
+    
+    def add_cluster_density(self, dataframe):
+        clusters_per_cube = dataframe.groupby('cube_id').size().reset_index(name='num_clusters')
+        mean_num_clusters = clusters_per_cube['num_clusters'].mean()
+        clusters_per_cube['cluster_number_density'] = (clusters_per_cube['num_clusters'] - mean_num_clusters)/ mean_num_clusters
+        dataframe = dataframe.merge(clusters_per_cube[['cube_id', 'cluster_number_density']], on='cube_id', how='left')
+        return dataframe
 
-        data = data.merge(clusters_per_cube[['cube_id', 'num_clusters']], on='cube_id', how='left')
-
-        # Calculate the number density of galaxy clusters in each cube
-        clusters_per_cube['cluster_number_density'] = clusters_per_cube['num_clusters'] / mean_num_clusters
-
-        # Associate the number density with each galaxy cluster in the data
-        data = data.merge(clusters_per_cube[['cube_id', 'cluster_number_density']], on='cube_id', how='left')
-
-        # Calculate the number of galaxies in each cube
-        galaxies_per_cube = data1.groupby('cube_id').size().reset_index(name='num_galaxies')
-
-        data = data.merge(galaxies_per_cube[['cube_id', 'num_galaxies']], on='cube_id', how='left')
-
-        # Calculate the mean number of galaxies in all cubes
+    def add_galaxy_ratio(self, dataframe, galaxy_dataframe):
+        galaxies_per_cube = galaxy_dataframe.groupby('cube_id').size().reset_index(name='num_galaxies')
         mean_num_galaxies = galaxies_per_cube['num_galaxies'].mean()
+        galaxies_per_cube['galaxy_number_ratio'] = galaxies_per_cube['num_galaxies'] / mean_num_galaxies
+        dataframe = dataframe.merge(galaxies_per_cube[['cube_id', 'galaxy_number_ratio']], on='cube_id', how='left')
+        return dataframe
+    
+    def add_galaxy_density(self, dataframe, galaxy_dataframe):
+        galaxies_per_cube = galaxy_dataframe.groupby('cube_id').size().reset_index(name='num_galaxies')
+        mean_num_galaxies = galaxies_per_cube['num_galaxies'].mean()
+        galaxies_per_cube['galaxy_number_density'] = (galaxies_per_cube['num_galaxies'] - mean_num_galaxies)/ mean_num_galaxies
+        dataframe = dataframe.merge(galaxies_per_cube[['cube_id', 'galaxy_number_density']], on='cube_id', how='left')
+        return dataframe
+    
+    def add_velocity_gradient(self, dataframe, galaxy_dataframe):
+        galaxies_per_cube = galaxy_dataframe.groupby('cube_id').size().reset_index(name='num_galaxies')
+        mean_num_galaxies = galaxies_per_cube['num_galaxies'].mean()
+        dg = (galaxies_per_cube['num_galaxies'] - mean_num_galaxies)/ mean_num_galaxies
+        k = np.fft.fftfreq(len(dg))
+        dg_k = np.fft.fft(dg)
+        inte = -1j * k * dg_k /(2*np.power(k, 2))
+        inte[k==0] = 0
+        s = np.abs(np.fft.ifft(inte))
+        galaxies_per_cube['Vg'] = s
+        dataframe = dataframe.merge(galaxies_per_cube[['cube_id', 'Vg']], on='cube_id', how='left')
+        return dataframe
 
-        # Calculate the number density of galaxies in each cube
-        galaxies_per_cube['galaxy_number_density'] = galaxies_per_cube['num_galaxies'] / mean_num_galaxies
+    def calculate(self):
+        data = self.__modify_dataframe_cluster__()
+        data1 = self.__modify_dataframe_galaxies__()
+        data, num_cubes_x, num_cubes_y, num_cubes_z = self.calculate_cube_indices(data)
+        data1 = self.calculate_cube_indices(data1)[0]
 
-        # Associate the number density with each galaxy cluster in the data
-        data = data.merge(galaxies_per_cube[['cube_id', 'galaxy_number_density']], on='cube_id', how='left')
-
+        data = self.add_cluster_density(data)
+        data = self.add_velocity_gradient(data, data1)
+        
         data = data.drop(['cube_x', 'cube_y', 'cube_z', 'cube_id'], axis=1)
 
         return data
-
 
 class Analysis:
 
@@ -201,8 +214,8 @@ class Analysis:
         df_c = self.distribution_clu.dataframe
         df_g = self.distribution_gal.dataframe
 
-        df_c['galaxy_number_density'] = df_g['galaxy_number_density']
-        df_c['num_galaxies'] = df_g['num_galaxies']
+        #df_c['galaxy_number_density'] = df_g['galaxy_number_density']
+        #df_c['num_galaxies'] = df_g['num_galaxies']
 
         df_c['Mstar'] = self.scaling.Mstar.value
         df_c['Mgas'] = self.scaling.Mgas.value
