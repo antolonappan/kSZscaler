@@ -6,7 +6,11 @@ import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 import pandas as pd
 from tqdm import tqdm
+from scipy import stats
 from pycachera import cache
+from astropy.cosmology import WMAP7 as cosmo
+from scipy.interpolate import RegularGridInterpolator
+from scipy.fftpack import fftn, ifftn, fftfreq
 class Scaling:
     
     def __init__(self,snap:str,box:str='',body:str='cluster') -> None:
@@ -104,125 +108,135 @@ class Scaling:
 
 class Distribution:
 
-    def __init__(self,grid:float,snap:str,box:str='') -> None:
-        self.grid = (grid * u.Mpc).to('kpc')
-        self._grid_ = self.grid.value
+    def __init__(self,ngrid:int,snap:str,box:str='') -> None:
+        
+
+        self.boxmin, self.boxmax,  = 0., 5e5 #in kpc (500Mpc)
+        self.nbins = ngrid
+        self.bin_len = self.boxmax/self.nbins 
         self.h = 0.7
         self.dataframe_clu = Magneticum(snap,box,'cluster').dataframe
         self.dataframe_gal = Magneticum(snap,box,'galaxies').dataframe
-        self.dataframe = self.calculate()
+        self.z = Magneticum.redshift_snapshot(snap,box)
     
-    def __modify_dataframe_cluster__(self):
-        dataframe = pd.DataFrame.from_dict({'x':self.dataframe_clu['x[kpc/h]']/self.h,
-                                            'y':self.dataframe_clu['y[kpc/h]']/self.h,
-                                            'z':self.dataframe_clu['z[kpc/h]']/self.h,})
-        #dataframe['m500c[Msol]'] = self.dataframe_clu['m500c[Msol/h]']/self.h
-        dataframe['Veff'] = np.sqrt(self.dataframe_clu['vx[km/s]']**2 + self.dataframe_clu['vy[km/s]']**2 + self.dataframe_clu['vz[km/s]']**2)
-        return dataframe
-
-    def __modify_dataframe_galaxies__(self):
-        dataframe = pd.DataFrame.from_dict({'x':self.dataframe_gal['x[kpc/h]']/self.h,
-                                            'y':self.dataframe_gal['y[kpc/h]']/self.h,
-                                            'z':self.dataframe_gal['z[kpc/h]']/self.h,})
-        return dataframe
-
+    def __get_position__(self,dataframe,dtype):
+        if dtype == pd.DataFrame:
+            dataframe = pd.DataFrame.from_dict({'x':dataframe['x[kpc/h]']/self.h,
+                                                'y':dataframe['y[kpc/h]']/self.h,
+                                                'z':dataframe['z[kpc/h]']/self.h,})
+        elif dtype == np.ndarray:
+            dataframe = np.vstack((dataframe['x[kpc/h]']/self.h,
+                                   dataframe['y[kpc/h]']/self.h,
+                                   dataframe['z[kpc/h]']/self.h))
+        else:
+            raise ValueError('dtype must be pd.DataFrame or np.ndarray')
         
-    def calculate_cube_indices(self, dataframe):
-        cube_size = self.grid.value
-        min_x, max_x = dataframe['x'].min(), dataframe['x'].max()
-        min_y, max_y = dataframe['y'].min(), dataframe['y'].max()
-        min_z, max_z = dataframe['z'].min(), dataframe['z'].max()
-        num_cubes_x = int(np.ceil((max_x - min_x) / cube_size))
-        num_cubes_y = int(np.ceil((max_y - min_y) / cube_size))
-        num_cubes_z = int(np.ceil((max_z - min_z) / cube_size))
-        print(num_cubes_x)
+        return dataframe
 
-        def assign_cube_ids(df):
-            df['cube_x'] = np.floor((df['x'] - min_x) / cube_size).astype(int)
-            df['cube_y'] = np.floor((df['y'] - min_y) / cube_size).astype(int)
-            df['cube_z'] = np.floor((df['z'] - min_z) / cube_size).astype(int)
-            df['cube_id'] = (df['cube_x'] * num_cubes_y * num_cubes_z +
-                            df['cube_y'] * num_cubes_z +
-                            df['cube_z'])
-            return df
+
+    def get_postion(self,body:str) -> np.ndarray:
+        if body == 'cluster' or body == 'c':
+            return self.__get_position__(self.dataframe_clu,np.ndarray)
+        elif body == 'galaxies' or body == 'g':
+            return self.__get_position__(self.dataframe_gal,np.ndarray)
+        else:
+            raise ValueError('body must be cluster or galaxies')
+    
+    def galaxy_number_counts(self) -> np.ndarray:
+        binedges = np.linspace(self.boxmin,self.boxmax,self.nbins+1)
+        bincenters = 0.5*(binedges[1:]+binedges[:-1])
+        ret = stats.binned_statistic_dd(self.get_postion('g').T, None, 'count', 
+                                bins=[binedges, binedges, binedges])
+        return ret.statistic
+
+    def galaxy_number_density(self) -> np.ndarray:
+        Ng = self.galaxy_number_counts()
+        Ng_m = np.mean(Ng)
+        return Ng/Ng_m - 1
+
+    def f_growth(self) -> float:
+        Om = cosmo.Om0
+        Ol = 1.-Om
+        return Om**(4./7.)+(1.+Om/2.)*Ol/70.   
+    
+    def prefactorize(self,deltag) -> float:
+        f_growth = self.f_growth()
+        H0 = cosmo.H0.to('/s').value
+        a0 = 1./(1.+ self.z)
+        bg = 5. 
+        return -a0*H0*f_growth*deltag/bg 
+    
+    def galaxy_nd_fft(self,prefactor=True) -> np.ndarray:
+        if prefactor:
+            return fftn(self.prefactorize(self.galaxy_number_density()))
+        else:
+            return fftn(self.galaxy_number_density())
+    
+    def k_vectors(self) -> tuple:
+        freq = fftfreq(self.nbins, d=self.bin_len*c.kpc.to('cm').value)
+        kx, ky, kz = np.meshgrid(freq, freq, freq, indexing='ij')
+        k_squared = kx**2 + ky**2 + kz**2
+        k_squared[0, 0, 0] = 1
+        return (kx,ky,kz,k_squared)
+    
+    def velocity_gradient(self,filter=True) -> np.ndarray:
+        kx,ky,kz,k_squared = self.k_vectors()
+        deltak = self.galaxy_nd_fft()
+        binedges = np.linspace(self.boxmin,self.boxmax,self.nbins+1)
+        bincenters = 0.5*(binedges[1:]+binedges[:-1])
+        pos_c = self.get_postion('c').T
+    
+        R_filter = 1.5*self.bin_len*c.kpc.to('cm').value
+        Wk = np.exp(-R_filter**2*k_squared/2.)
         
-        dataframe = assign_cube_ids(dataframe)
-        return dataframe, num_cubes_x, num_cubes_y, num_cubes_z
-    
-    def add_cluster_ratio(self, dataframe):
-        clusters_per_cube = dataframe.groupby('cube_id').size().reset_index(name='num_clusters')
-        mean_num_clusters = clusters_per_cube['num_clusters'].mean()
-        clusters_per_cube['cluster_number_ratio'] = clusters_per_cube['num_clusters'] / mean_num_clusters
-        dataframe = dataframe.merge(clusters_per_cube[['cube_id', 'cluster_number_ratio']], on='cube_id', how='left')
-        return dataframe
-    
-    def add_cluster_density(self, dataframe):
-        clusters_per_cube = dataframe.groupby('cube_id').size().reset_index(name='num_clusters')
-        mean_num_clusters = clusters_per_cube['num_clusters'].mean()
-        clusters_per_cube['cluster_number_density'] = (clusters_per_cube['num_clusters'] - mean_num_clusters)/ mean_num_clusters
-        dataframe = dataframe.merge(clusters_per_cube[['cube_id', 'cluster_number_density']], on='cube_id', how='left')
-        return dataframe
+        if filter:
+            deltak = deltak*Wk
+ 
+        momentum_x = deltak * kx / k_squared
+        momentum_y = deltak * ky / k_squared
+        momentum_z = deltak * kz / k_squared
 
-    def add_galaxy_ratio(self, dataframe, galaxy_dataframe):
-        galaxies_per_cube = galaxy_dataframe.groupby('cube_id').size().reset_index(name='num_galaxies')
-        mean_num_galaxies = galaxies_per_cube['num_galaxies'].mean()
-        galaxies_per_cube['galaxy_number_ratio'] = galaxies_per_cube['num_galaxies'] / mean_num_galaxies
-        dataframe = dataframe.merge(galaxies_per_cube[['cube_id', 'galaxy_number_ratio']], on='cube_id', how='left')
-        return dataframe
-    
-    def add_galaxy_density(self, dataframe, galaxy_dataframe):
-        galaxies_per_cube = galaxy_dataframe.groupby('cube_id').size().reset_index(name='num_galaxies')
-        mean_num_galaxies = galaxies_per_cube['num_galaxies'].mean()
-        galaxies_per_cube['galaxy_number_density'] = (galaxies_per_cube['num_galaxies'] - mean_num_galaxies)/ mean_num_galaxies
-        dataframe = dataframe.merge(galaxies_per_cube[['cube_id', 'galaxy_number_density']], on='cube_id', how='left')
-        return dataframe
-    
-    def add_velocity_gradient(self, dataframe, galaxy_dataframe):
-        galaxies_per_cube = galaxy_dataframe.groupby('cube_id').size().reset_index(name='num_galaxies')
-        mean_num_galaxies = galaxies_per_cube['num_galaxies'].mean()
-        dg = (galaxies_per_cube['num_galaxies'] - mean_num_galaxies)/ mean_num_galaxies
-        k = np.fft.fftfreq(len(dg))
-        dg_k = np.fft.fft(dg)
-        inte = -1j * k * dg_k /(2*np.power(k, 2))
-        inte[k==0] = 0
-        s = np.abs(np.fft.ifft(inte))
-        galaxies_per_cube['Vg'] = s
-        dataframe = dataframe.merge(galaxies_per_cube[['cube_id', 'Vg']], on='cube_id', how='left')
-        return dataframe
+        velocity_x = np.real(ifftn(-1j*momentum_x))
+        velocity_y = np.real(ifftn(-1j*momentum_y))
+        velocity_z = np.real(ifftn(-1j*momentum_z))
 
-    def calculate(self):
-        data = self.__modify_dataframe_cluster__()
-        data1 = self.__modify_dataframe_galaxies__()
-        data, num_cubes_x, num_cubes_y, num_cubes_z = self.calculate_cube_indices(data)
-        data1 = self.calculate_cube_indices(data1)[0]
+        velocity_x_interpolator = RegularGridInterpolator((bincenters,bincenters,bincenters), 
+                                                        velocity_x, bounds_error=False, 
+                                                        fill_value=None, method='linear')
+        velocity_y_interpolator = RegularGridInterpolator((bincenters,bincenters,bincenters), 
+                                                        velocity_y, bounds_error=False, 
+                                                        fill_value=None, method='linear')
+        velocity_z_interpolator = RegularGridInterpolator((bincenters,bincenters,bincenters), 
+                                                        velocity_z, bounds_error=False, 
+                                                        fill_value=None, method='linear')
 
-        data = self.add_cluster_density(data)
-        data = self.add_velocity_gradient(data, data1)
-        
-        data = data.drop(['cube_x', 'cube_y', 'cube_z', 'cube_id'], axis=1)
 
-        return data
+        vx = velocity_x_interpolator(pos_c)/1e5
+        vy = velocity_y_interpolator(pos_c)/1e5
+        vz = velocity_z_interpolator(pos_c)/1e5
+        vnet = np.sqrt(vx**2+vy**2+vz**2)
+        return (vx,vy,vz,vnet)
+
 
 class Analysis:
 
-    def __init__(self,grid:list,snap:str,box:str):
+    def __init__(self,grid:int,snap:str,box:str):
         self.scaling = Scaling(snap,box,'cluster')
-        self.distribution_clu = Distribution(grid[0],snap,box)
-        self.distribution_gal = Distribution(grid[1],snap,box)
+        self.distribution = Distribution(grid,snap,box)
 
     def get_dataframe(self):
-        df_c = self.distribution_clu.dataframe
-        df_g = self.distribution_gal.dataframe
-
-        #df_c['galaxy_number_density'] = df_g['galaxy_number_density']
-        #df_c['num_galaxies'] = df_g['num_galaxies']
-
+        df_c = self.distribution.dataframe_clu
+        #df_c['Ngal'] = self.distribution.galaxy_number_density()
+        vx,vy,vz,vnet = self.distribution.velocity_gradient()
+        df_c['Vx'] = vx
+        df_c['Vy'] = vy
+        df_c['Vz'] = vz
+        df_c['Vnet'] = vnet
+        df_c['vnet'] = np.sqrt(df_c['vx[km/s]']**2+df_c['vy[km/s]']**2+df_c['vz[km/s]']**2)
         df_c['Mstar'] = self.scaling.Mstar.value
         df_c['Mgas'] = self.scaling.Mgas.value
         df_c['Vlos'] = self.scaling.Vlos.value
         Y,M = self.scaling.Y_M()
         df_c['Y'] = np.log(Y.value)
         df_c['M'] = np.log(M.value)
-
-
         return df_c
