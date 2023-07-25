@@ -36,11 +36,11 @@ class Scaling:
     
     @property
     def Vlos(self) -> np.ndarray:
-        return np.abs(np.array(self.dataframe['vx[km/s]'])) * (u.km/u.s)
+        return np.array(self.dataframe['vz[km/s]']) * (u.km/u.s)
     
     def Yksz(self) -> np.ndarray:
         first = c.sigma_T/c.c
-        second = self.Vlos
+        second = np.abs(self.Vlos)
         third = self.Mgas.to('kg') / (c.m_p)
         return (first.to('cm s') * second.to('cm/s') * third).to('Mpc^2')
 
@@ -114,7 +114,7 @@ class Distribution:
         self.boxmin, self.boxmax,  = 0., 5e5 #in kpc (500Mpc)
         self.nbins = ngrid
         self.bin_len = self.boxmax/self.nbins 
-        self.h = 0.7
+        self.h = 0.704
         self.dataframe_clu = Magneticum(snap,box,'cluster').dataframe
         self.dataframe_gal = Magneticum(snap,box,'galaxies').dataframe
         self.z = Magneticum.redshift_snapshot(snap,box)
@@ -186,7 +186,7 @@ class Distribution:
         bincenters = 0.5*(binedges[1:]+binedges[:-1])
         pos_c = self.get_postion('c').T
     
-        R_filter = 1.5*self.bin_len*c.kpc.to('cm').value
+        R_filter = 2*self.bin_len*c.kpc.to('cm').value
         Wk = np.exp(-R_filter**2*k_squared/2.)
         
         if filter:
@@ -195,11 +195,10 @@ class Distribution:
         momentum_x = deltak * kx / k_squared
         momentum_y = deltak * ky / k_squared
         momentum_z = deltak * kz / k_squared
-
         velocity_x = np.real(ifftn(-1j*momentum_x))
         velocity_y = np.real(ifftn(-1j*momentum_y))
         velocity_z = np.real(ifftn(-1j*momentum_z))
-
+        
         velocity_x_interpolator = RegularGridInterpolator((bincenters,bincenters,bincenters), 
                                                         velocity_x, bounds_error=False, 
                                                         fill_value=None, method='linear')
@@ -209,14 +208,13 @@ class Distribution:
         velocity_z_interpolator = RegularGridInterpolator((bincenters,bincenters,bincenters), 
                                                         velocity_z, bounds_error=False, 
                                                         fill_value=None, method='linear')
-
-
-        vx = velocity_x_interpolator(pos_c)/1e5
-        vy = velocity_y_interpolator(pos_c)/1e5
-        vz = velocity_z_interpolator(pos_c)/1e5
+        
+        
+        vx = velocity_x_interpolator(pos_c)
+        vy = velocity_y_interpolator(pos_c)
+        vz = velocity_z_interpolator(pos_c)
         vnet = np.sqrt(vx**2+vy**2+vz**2)
         return (vx,vy,vz,vnet)
-
 
 class Analysis:
 
