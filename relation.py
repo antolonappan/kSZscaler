@@ -11,6 +11,9 @@ from pycachera import cache
 from astropy.cosmology import WMAP7 as cosmo
 from scipy.interpolate import RegularGridInterpolator
 from scipy.fftpack import fftn, ifftn, fftfreq
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error, r2_score
 class Scaling:
     
     def __init__(self,snap:str,box:str='',body:str='cluster') -> None:
@@ -238,3 +241,158 @@ class Analysis:
         df_c['Y'] = np.log(Y.value)
         df_c['M'] = np.log(M.value)
         return df_c
+
+
+
+
+class RandomForest:
+    def __init__(self, data_df):
+        self.data_df = data_df
+        self.X = data_df[['Vz', 'Vnet','Mstar', 'M']]
+        self.y = data_df['Y']
+        self.best_hyperparameters = {}
+        self.models = {}
+        self.r2_scores = {}
+
+    def split_data(self, test_size=0.4, tune_size=0.2, random_state=42):
+        X_train, X_temp, y_train, y_temp = train_test_split(self.X, self.y, test_size=test_size, random_state=random_state)
+        X_test, X_tune, y_test, y_tune = train_test_split(X_temp, y_temp, test_size=tune_size, random_state=random_state)
+        
+        self.X_train, self.X_test, self.X_tune = X_train, X_test, X_tune
+        self.y_train, self.y_test, self.y_tune = y_train, y_test, y_tune
+
+
+    def get_fit(self, which, zscore=False):
+        if which == 'train':
+            X, y = self.X_train, self.y_train
+        elif which == 'test':
+            X, y = self.X_test, self.y_test
+        elif which == 'tune':
+            X, y = self.X_tune, self.y_tune
+        else:
+            raise ValueError("Invalid value for 'which'. Use 'train', 'test', or 'tune'.")
+
+        # Perform linear fit using numpy.polyfit
+        fit = np.polyfit(X['M'], y, 1)
+        slope, intercept = fit
+
+        if zscore:
+            if which != 'train':
+                slope, intercept = self.get_fit('train')
+            z_scores = (y - (slope * X['M'] + intercept)) / np.std(y)
+            #outliers_mask = z_scores > 3  # Define a threshold for outliers (e.g., Z-score > 3)
+            #X_cleaned = X.loc[~outliers_mask]
+            #y_cleaned = y.loc[~outliers_mask]
+            #return np.polyfit(X_cleaned['M'], y_cleaned, 1)
+            return z_scores
+
+        return fit
+
+    
+    def clean_data(self, zscore_threshold=3):
+        z_scores = np.abs(self.get_fit('train', zscore=True))
+        outliers_mask = z_scores > zscore_threshold
+        self.X_train = self.X_train.loc[~outliers_mask]
+        self.y_train = self.y_train.loc[~outliers_mask]
+        z_scores = np.abs(self.get_fit('test', zscore=True))
+        outliers_mask = z_scores > zscore_threshold
+        self.X_test = self.X_test.loc[~outliers_mask]
+        self.y_test = self.y_test.loc[~outliers_mask]
+        z_scores = np.abs(self.get_fit('tune', zscore=True))
+        outliers_mask = z_scores > zscore_threshold
+        self.X_tune = self.X_tune.loc[~outliers_mask]
+        self.y_tune = self.y_tune.loc[~outliers_mask]
+
+
+    def find_best_hyperparameters(self, param_grid, cv=5):
+        rf_regressor = RandomForestRegressor()
+        grid_search = GridSearchCV(rf_regressor, param_grid, cv=cv, n_jobs=-1, verbose=3)
+        grid_search.fit(self.X_tune, self.y_tune)
+        self.best_hyperparameters = grid_search.best_params_
+
+    def fit_with_hyperparameters(self, features, target):
+        rf_regressor = RandomForestRegressor(**self.best_hyperparameters)
+        X_train = self.X_train[features]
+        X_test = self.X_test[features]
+        rf_regressor.fit(X_train, self.y_train)
+        features_key = "_".join(features)
+        self.models[features_key] = rf_regressor
+
+        # Calculate R2 score and store it
+        y_train_pred = rf_regressor.predict(X_train.values.reshape(-1, len(features)))
+        y_test_pred = rf_regressor.predict(X_test.values.reshape(-1, len(features)))
+        self.r2_scores[features_key] = {
+            'train_r2': r2_score(self.y_train, y_train_pred),
+            'test_r2': r2_score(self.y_test, y_test_pred)
+        }
+
+    def calculate_scatter(self, features):
+        features_key = "_".join(features)  # Convert list of features to a string key
+        rf_regressor = self.models[features_key]
+        X_train = self.X_train[features]
+        X_test = self.X_test[features]
+        # Convert features to a 2D array
+        X_train = X_train.values.reshape(-1, len(features))
+        X_test = X_test.values.reshape(-1, len(features))
+        y_train_pred = rf_regressor.predict(X_train)
+        y_test_pred = rf_regressor.predict(X_test)
+        train_scatter = np.sqrt(mean_squared_error(self.y_train, y_train_pred))
+        test_scatter = np.sqrt(mean_squared_error(self.y_test, y_test_pred))
+        return train_scatter, test_scatter
+
+    def plot_scatter_statistics(self):
+
+        train_scatters = []
+        test_scatters = []
+        feature_sets = list(self.models.keys())
+        feature_sets = [feature_set.split("_") for feature_set in feature_sets]
+
+        for features in feature_sets:
+            train_scatter, test_scatter = self.calculate_scatter(features)
+            train_scatters.append(train_scatter)
+            test_scatters.append(test_scatter)
+        
+        train_percent_change = [100 * (sc - train_scatters[0]) / train_scatters[0] for sc in train_scatters]
+        test_percent_change = [100 * (sc - test_scatters[0]) / test_scatters[0] for sc in test_scatters]
+
+
+        plt.figure(figsize=(10, 6))
+        plt.bar(np.arange(len(feature_sets)), train_scatters, width=0.4, align='center', label='Train Scatter')
+        plt.bar(np.arange(len(feature_sets)) + 0.4, test_scatters, width=0.4, align='center', label='Test Scatter')
+        plt.xticks(np.arange(len(feature_sets)), feature_sets, rotation=45)
+        plt.xlabel('Feature Set')
+        plt.ylabel('Scatter')
+        plt.title('Scatter for Different Feature Sets')
+        plt.legend()
+
+        for i, feature_set in enumerate(feature_sets):
+            plt.annotate(f'{train_percent_change[i]:.2f}%', xy=(i, train_scatters[i]), xytext=(-10, 5), textcoords='offset points', ha='center', va='bottom', fontsize=8)
+            plt.annotate(f'{test_percent_change[i]:.2f}%', xy=(i + 0.4, test_scatters[i]), xytext=(-10, 5), textcoords='offset points', ha='center', va='bottom', fontsize=8)
+
+
+        plt.tight_layout()
+        plt.show()
+
+    def plot_r2_statistics(self):
+
+        feature_sets = list(self.models.keys())
+        feature_sets_name = [feature_set.split("_") for feature_set in feature_sets]
+        train_r2_values = [self.r2_scores[features]['train_r2'] for features in feature_sets]
+        test_r2_values = [self.r2_scores[features]['test_r2'] for features in feature_sets]
+
+        plt.figure(figsize=(10, 6))
+        plt.bar(np.arange(len(feature_sets)), train_r2_values, width=0.4, align='center', label='Train R2')
+        plt.bar(np.arange(len(feature_sets)) + 0.4, test_r2_values, width=0.4, align='center', label='Test R2')
+        plt.xticks(np.arange(len(feature_sets)), feature_sets_name, rotation=45)
+        plt.xlabel('Feature Set')
+        plt.ylabel('R2 Score')
+        plt.title('R2 Score for Different Feature Sets')
+        plt.legend()
+
+        for i, train_r2 in enumerate(train_r2_values):
+            plt.text(i, train_r2 + 0.01, f'{train_r2:.2f}', ha='center', va='bottom')
+        for i, test_r2 in enumerate(test_r2_values):
+            plt.text(i + 0.4, test_r2 + 0.01, f'{test_r2:.2f}', ha='center', va='bottom')
+
+        plt.tight_layout()
+        plt.show()
