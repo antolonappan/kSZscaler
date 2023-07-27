@@ -284,7 +284,7 @@ class RandomForest:
             raise ValueError("Invalid value for 'which'. Use 'train', 'test', or 'tune'.")
         
         if quantile is not None:
-            Q = {'Q1':0.25, 'Q2':0.50, 'Q3':0.75}[quantile]
+            Q = {'Q1':0.25, 'Q2':0.50, 'Q3':0.75,'Q4':.95}[quantile]
             print(f'Using {Q} quantile for Mass cut')
             m_mask = X['M'] > X['M'].quantile(Q) 
             X2 = X.loc[m_mask]
@@ -315,19 +315,20 @@ class RandomForest:
         return fit
     
     def plot_fit(self, which='train', quantile=None):
-        
-        cc = ['r','g','b']
+        Q = {'Q1':0.25, 'Q2':0.50, 'Q3':0.75,'Q4':.95}
+        cc = ['r','g','b','cyan']
         if type(quantile) == list:
             for i,q in enumerate(quantile):
                 x_q, y_q, x_fit_q, y_fit_q = self.get_fit(which, return_xy=True, quantile=q)
                 plt.scatter(x_q, y_q, s=1, alpha=0.5,c=cc[i])
-                plt.plot(x_fit_q, y_fit_q, color=cc[i])
+                plt.plot(x_fit_q, y_fit_q, color=cc[i],label=f'{Q[q]} quantile')
         else:
             x,y,x_fit, y_fit = self.get_fit(which, return_xy=True, quantile=quantile)
             plt.scatter(x, y, s=1, alpha=0.5)
             plt.plot(x_fit, y_fit, color='red')
         plt.xlabel('M')
         plt.ylabel('Yksz')
+        plt.legend()
     
     def clean_data(self, zscore_threshold=3):
         z_scores = np.abs(self.get_fit('train', zscore=True))
