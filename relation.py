@@ -38,6 +38,10 @@ class Scaling:
         return np.array(self.dataframe['m500c[Msol/h]'] / self.h) * u.M_sun
     
     @property
+    def Temp(self) -> np.ndarray:
+        return np.array(self.dataframe['T[kev]']) * u.keV
+    
+    @property
     def Vlos(self) -> np.ndarray:
         return np.array(self.dataframe['vz[km/s]']) * (u.km/u.s)
     
@@ -46,6 +50,11 @@ class Scaling:
         second = np.abs(self.Vlos)
         third = self.Mgas.to('kg') / (c.m_p)
         return (first.to('cm s') * second.to('cm/s') * third).to('Mpc^2')
+
+    def Ytsz(self) -> np.ndarray:
+        first = (c.sigma_T*c.k_B*self.Temp.to('K',equivalencies=u.temperature_energy()))/(c.m_e*c.c**2)
+        second = self.Mgas.to('kg') / (c.m_p)
+        return (first * second).to('Mpc^2')
 
     def gas_halo_relation(self) -> None:
         Mhalo = np.array(self.dataframe['m500c[Msol/h]']) /self.h * u.M_sun
@@ -238,8 +247,9 @@ class Analysis:
         df_c['Mgas'] = self.scaling.Mgas.value
         df_c['Vlos'] = self.scaling.Vlos.value
         Y,M = self.scaling.Y_M()
-        df_c['Y'] = np.log(Y.value)
+        df_c['Yksz'] = np.log(Y.value)
         df_c['M'] = np.log(M.value)
+        df_c['Ytsz'] = np.log(self.scaling.Ytsz().value)
         return df_c
 
 
@@ -248,13 +258,13 @@ class Analysis:
 class RandomForest:
     def __init__(self, data_df):
         self.data_df = data_df
-        self.X = data_df[['Vz', 'Vnet','Mstar', 'M']]
-        self.y = data_df['Y']
+        self.X = data_df[['Vz', 'Vnet','Mstar', 'M', 'Ytsz']]
+        self.y = data_df['Yksz']
         self.best_hyperparameters = {}
         self.models = {}
         self.r2_scores = {}
 
-    def split_data(self, test_size=0.4, tune_size=0.2, random_state=42):
+    def split_data(self, test_size=0.2, tune_size=0.2, random_state=42):
         X_train, X_temp, y_train, y_temp = train_test_split(self.X, self.y, test_size=test_size, random_state=random_state)
         X_test, X_tune, y_test, y_tune = train_test_split(X_temp, y_temp, test_size=tune_size, random_state=random_state)
         
@@ -262,7 +272,8 @@ class RandomForest:
         self.y_train, self.y_test, self.y_tune = y_train, y_test, y_tune
 
 
-    def get_fit(self, which, zscore=False):
+    def get_fit(self, which, zscore=False, quantile=None):
+        
         if which == 'train':
             X, y = self.X_train, self.y_train
         elif which == 'test':
@@ -271,6 +282,14 @@ class RandomForest:
             X, y = self.X_tune, self.y_tune
         else:
             raise ValueError("Invalid value for 'which'. Use 'train', 'test', or 'tune'.")
+        
+        if quantile is not None:
+            Q = {'Q1':0.25, 'Q2':0.50, 'Q3':0.75}[quantile]
+            print(f'Using {Q} quantile for Mass cut')
+            m_mask = X['M'] > X['M'].quantile(Q) 
+            X = X.loc[~m_mask]
+            y = y.loc[~m_mask]
+
 
         # Perform linear fit using numpy.polyfit
         fit = np.polyfit(X['M'], y, 1)
