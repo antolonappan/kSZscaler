@@ -272,7 +272,7 @@ class RandomForest:
         self.y_train, self.y_test, self.y_tune = y_train, y_test, y_tune
 
 
-    def get_fit(self, which, zscore=False, quantile=None):
+    def get_fit(self, which, zscore=False, quantile=None, return_xy=False):
         
         if which == 'train':
             X, y = self.X_train, self.y_train
@@ -287,14 +287,18 @@ class RandomForest:
             Q = {'Q1':0.25, 'Q2':0.50, 'Q3':0.75}[quantile]
             print(f'Using {Q} quantile for Mass cut')
             m_mask = X['M'] > X['M'].quantile(Q) 
-            X = X.loc[~m_mask]
-            y = y.loc[~m_mask]
+            X2 = X.loc[m_mask]
+            y2 = y.loc[m_mask]
+        else:
+            X2 = X
+            y2 = y
 
 
         # Perform linear fit using numpy.polyfit
-        fit = np.polyfit(X['M'], y, 1)
+        fit = np.polyfit(X2['M'], y2, 1)
         slope, intercept = fit
 
+            
         if zscore:
             if which != 'train':
                 slope, intercept = self.get_fit('train')
@@ -304,9 +308,26 @@ class RandomForest:
             #y_cleaned = y.loc[~outliers_mask]
             #return np.polyfit(X_cleaned['M'], y_cleaned, 1)
             return z_scores
+        
+        if return_xy:
+            return X2['M'], y2, X['M'], slope * X['M'] + intercept
 
         return fit
-
+    
+    def plot_fit(self, which='train', quantile=None):
+        
+        cc = ['r','g','b']
+        if type(quantile) == list:
+            for i,q in enumerate(quantile):
+                x_q, y_q, x_fit_q, y_fit_q = self.get_fit(which, return_xy=True, quantile=q)
+                plt.scatter(x_q, y_q, s=1, alpha=0.5,c=cc[i])
+                plt.plot(x_fit_q, y_fit_q, color=cc[i])
+        else:
+            x,y,x_fit, y_fit = self.get_fit(which, return_xy=True, quantile=quantile)
+            plt.scatter(x, y, s=1, alpha=0.5)
+            plt.plot(x_fit, y_fit, color='red')
+        plt.xlabel('M')
+        plt.ylabel('Yksz')
     
     def clean_data(self, zscore_threshold=3):
         z_scores = np.abs(self.get_fit('train', zscore=True))
