@@ -1,3 +1,6 @@
+#https://arxiv.org/pdf/2201.01305.pdf
+
+
 from database import Magneticum
 import numpy as np
 from astropy import units as u
@@ -258,11 +261,12 @@ class Analysis:
 class RandomForest:
     def __init__(self, data_df):
         self.data_df = data_df
-        self.X = data_df[['Vz', 'Vnet','Mstar', 'M', 'Ytsz']]
+        self.X = data_df[['Vz', 'Vnet','Mstar', 'M', 'Ytsz','Vlos']]
         self.y = data_df['Yksz']
         self.best_hyperparameters = {}
         self.models = {}
         self.r2_scores = {}
+        self.rmse_scores = {}
 
     def split_data(self, test_size=0.2, tune_size=0.2, random_state=42):
         X_train, X_temp, y_train, y_temp = train_test_split(self.X, self.y, test_size=test_size, random_state=random_state)
@@ -310,7 +314,7 @@ class RandomForest:
             return z_scores
         
         if return_xy:
-            return X2['M'], y2, X['M'], slope * X['M'] + intercept
+            return X2['M'], y2, X['M'], slope * X['M'] + intercept, slope
 
         return fit
     
@@ -319,9 +323,9 @@ class RandomForest:
         cc = ['r','g','b','cyan']
         if type(quantile) == list:
             for i,q in enumerate(quantile):
-                x_q, y_q, x_fit_q, y_fit_q = self.get_fit(which, return_xy=True, quantile=q)
+                x_q, y_q, x_fit_q, y_fit_q,slope = self.get_fit(which, return_xy=True, quantile=q)
                 plt.scatter(x_q, y_q, s=1, alpha=0.5,c=cc[i])
-                plt.plot(x_fit_q, y_fit_q, color=cc[i],label=f'{Q[q]} quantile')
+                plt.plot(x_fit_q, y_fit_q, color=cc[i],label=f'{Q[q]} quantile, slope={slope:.2f}')
         else:
             x,y,x_fit, y_fit = self.get_fit(which, return_xy=True, quantile=quantile)
             plt.scatter(x, y, s=1, alpha=0.5)
@@ -365,6 +369,10 @@ class RandomForest:
         self.r2_scores[features_key] = {
             'train_r2': r2_score(self.y_train, y_train_pred),
             'test_r2': r2_score(self.y_test, y_test_pred)
+        }
+        self.rmse_scores[features_key] = {
+            'train_rmse': RMSE(self.y_train, y_train_pred),
+            'test_rmse': RMSE(self.y_test, y_test_pred)
         }
 
     def calculate_scatter(self, features):
@@ -437,3 +445,30 @@ class RandomForest:
 
         plt.tight_layout()
         plt.show()
+    
+    def plot_RMSE(self):
+        feature_sets = list(self.models.keys())
+        feature_sets_name = [feature_set.split("_") for feature_set in feature_sets]
+        train_rmse_values = [self.rmse_scores[features]['train_rmse'] for features in feature_sets]
+        test_rmse_values = [self.rmse_scores[features]['test_rmse'] for features in feature_sets]
+
+        plt.figure(figsize=(10, 6))
+        plt.bar(np.arange(len(feature_sets)), train_rmse_values, width=0.4, align='center', label='Train RMSE')
+        plt.bar(np.arange(len(feature_sets)) + 0.4, test_rmse_values, width=0.4, align='center', label='Test RMSE')
+        plt.xticks(np.arange(len(feature_sets)), feature_sets_name, rotation=45)
+        plt.xlabel('Feature Set')
+        plt.ylabel('RMSE')
+        plt.title('RMSE for Different Feature Sets')
+        plt.legend()
+
+        for i, train_rmse in enumerate(train_rmse_values):
+            plt.text(i, train_rmse + 0.01, f'{train_rmse:.2f}', ha='center', va='bottom')
+        for i, test_rmse in enumerate(test_rmse_values):
+            plt.text(i + 0.4, test_rmse + 0.01, f'{test_rmse:.2f}', ha='center', va='bottom')
+
+        plt.tight_layout()
+        plt.show()
+
+
+def RMSE(true, predict):
+    return np.sqrt(((true-predict)**2.).sum()/len(true))
