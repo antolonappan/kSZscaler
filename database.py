@@ -32,11 +32,14 @@ class Magneticum:
         return list(snap.keys())
     
     @staticmethod
-    def redshift_snapshot(snap:str,box:str='') -> float:
+    def redshift_snapshot(snap:str=None,box:str='') -> float:
         assert box in ['','b'] 
         dir_base = os.path.dirname(os.path.realpath(__file__))
         snapdic = pl.load(open(os.path.join(dir_base,'Data',f'box2{box}.pkl'),'rb'))
-        return snapdic[snap]
+        if snap is None:
+            return snapdic
+        else:
+            return snapdic[snap]
     
 
     def download_data(self) -> None:

@@ -17,6 +17,9 @@ from scipy.fftpack import fftn, ifftn, fftfreq
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.model_selection import cross_val_score
+
+
 class Scaling:
     
     def __init__(self,snap:str,box:str='',body:str='cluster') -> None:
@@ -261,41 +264,72 @@ class Analysis:
 class RandomForest:
     def __init__(self, data_df):
         self.data_df = data_df
-        self.X = data_df[['Vz', 'Vnet','Mstar', 'M', 'Ytsz','Vlos']]
+        self.add_quantile()
+        self.X = data_df[['Vz','Mstar', 'M','Vlos','M_q']]
         self.y = data_df['Yksz']
         self.best_hyperparameters = {}
         self.models = {}
         self.r2_scores = {}
         self.rmse_scores = {}
+        self.cvmodels = {}
+        self.cv_scores = {}
+    
+    def add_quantile(self,q_div=4):
+        Q = self.get_q(q_div)
+        labels = list(Q.keys())
+        q_list = [0,0.25,0.5,0.75,1]
+        self.data_df['M_q'] = pd.qcut(self.data_df['M'],q=q_list,labels=labels)
+    
+    
+    def get_q(self,num_divisions,str=False):
+        q_dict = {}
+        step = 1 / num_divisions
 
-    def split_data(self, test_size=0.2, tune_size=0.2, random_state=42):
-        X_train, X_temp, y_train, y_temp = train_test_split(self.X, self.y, test_size=test_size, random_state=random_state)
-        X_test, X_tune, y_test, y_tune = train_test_split(X_temp, y_temp, test_size=tune_size, random_state=random_state)
+        for i in range(num_divisions):
+            start = i * step
+            end = start + step
+            key = f'Q{i + 1}'
+            if str:
+                q_dict[key] = f'{np.round(start,2)}-{np.round(end,2)}'
+            else:
+                q_dict[key] = [np.round(start,2), np.round(end,2)]
+
+        return q_dict
+
+    def split_data(self, test_size=0.8, random_state=42):
         
-        self.X_train, self.X_test, self.X_tune = X_train, X_test, X_tune
-        self.y_train, self.y_test, self.y_tune = y_train, y_test, y_tune
+        XX_train, XX_test, yy_train, yy_test = train_test_split(self.X, self.y, test_size=test_size,stratify=self.X['M_q'],random_state=random_state)
+        
+        self.X_train, self.X_test  = XX_train, XX_test
+        self.y_train, self.y_test  = yy_train, yy_test
 
+    def get_data(self,which,q_div=None,quantile=None):
+        if which == 'train':
+            X, y = self.X_train, self.y_train
+        elif which == 'test':
+            X, y = self.X_test, self.y_test
+        else:
+            raise ValueError("Invalid value for 'which'. Use 'train', 'test', or 'tune'.")
+        
+        if quantile is not None:
+            assert q_div is not None, 'q_div is not given'
+            Q = self.get_q(q_div)[quantile]
+            print(f'Using {Q} quantile for Mass cut')
+            m_mask = (X['M'] >= X['M'].quantile(Q[0])) & (X['M'] < X['M'].quantile(Q[1]))
+            X = X.loc[m_mask]
+            y = y.loc[m_mask]
+        return X,y
 
-    def get_fit(self, which, zscore=False, quantile=None, return_xy=False):
+    def get_fit(self, which, zscore=False, q_div=4,quantile=None, return_xy=False):
         
         if which == 'train':
             X, y = self.X_train, self.y_train
         elif which == 'test':
             X, y = self.X_test, self.y_test
-        elif which == 'tune':
-            X, y = self.X_tune, self.y_tune
         else:
             raise ValueError("Invalid value for 'which'. Use 'train', 'test', or 'tune'.")
         
-        if quantile is not None:
-            Q = {'Q1':0.25, 'Q2':0.50, 'Q3':0.75,'Q4':.95}[quantile]
-            print(f'Using {Q} quantile for Mass cut')
-            m_mask = X['M'] > X['M'].quantile(Q) 
-            X2 = X.loc[m_mask]
-            y2 = y.loc[m_mask]
-        else:
-            X2 = X
-            y2 = y
+        X2, y2 = self.get_data(which,q_div=q_div,quantile=quantile)
 
 
         # Perform linear fit using numpy.polyfit
@@ -318,18 +352,24 @@ class RandomForest:
 
         return fit
     
-    def plot_fit(self, which='train', quantile=None):
-        Q = {'Q1':0.25, 'Q2':0.50, 'Q3':0.75,'Q4':.95}
-        cc = ['r','g','b','cyan']
-        if type(quantile) == list:
-            for i,q in enumerate(quantile):
-                x_q, y_q, x_fit_q, y_fit_q,slope = self.get_fit(which, return_xy=True, quantile=q)
-                plt.scatter(x_q, y_q, s=1, alpha=0.5,c=cc[i])
-                plt.plot(x_fit_q, y_fit_q, color=cc[i],label=f'{Q[q]} quantile, slope={slope:.2f}')
-        else:
-            x,y,x_fit, y_fit = self.get_fit(which, return_xy=True, quantile=quantile)
+    def plot_fit(self, which='train',q_div=4,quantile=None):
+
+        if (q_div is not None) and (quantile is None):
+            Q = self.get_q(q_div,str=True)
+            for i in range(q_div):
+                q = f'Q{i + 1}'
+                x_q, y_q, x_fit_q, y_fit_q,slope = self.get_fit(which, return_xy=True, q_div=q_div,quantile=q)
+                plt.scatter(x_q, y_q, s=1, alpha=0.5)
+                plt.plot(x_fit_q, y_fit_q,label=f'{Q[q]} quantile, slope={slope:.2f}')
+        elif (q_div is None) and (quantile is None):
+            x,y,x_fit, y_fit,slope = self.get_fit(which, return_xy=True, quantile=quantile)
             plt.scatter(x, y, s=1, alpha=0.5)
-            plt.plot(x_fit, y_fit, color='red')
+            plt.plot(x_fit, y_fit, color='red',label=f'{quantile} quantile, slope={slope:.2f}')
+        elif (q_div is not None) and (quantile is not None):
+            x,y,x_fit, y_fit,slope = self.get_fit(which, return_xy=True, q_div=q_div,quantile=quantile)
+            plt.scatter(x, y, s=1, alpha=0.5)
+            plt.plot(x_fit, y_fit, color='red',label=f'{quantile} quantile, slope={slope:.2f}')
+    
         plt.xlabel('M')
         plt.ylabel('Yksz')
         plt.legend()
@@ -343,50 +383,56 @@ class RandomForest:
         outliers_mask = z_scores > zscore_threshold
         self.X_test = self.X_test.loc[~outliers_mask]
         self.y_test = self.y_test.loc[~outliers_mask]
-        z_scores = np.abs(self.get_fit('tune', zscore=True))
-        outliers_mask = z_scores > zscore_threshold
-        self.X_tune = self.X_tune.loc[~outliers_mask]
-        self.y_tune = self.y_tune.loc[~outliers_mask]
 
 
     def find_best_hyperparameters(self, param_grid, cv=5):
+        X_train = self.X_train.drop(columns=['M_q','Vlos'])
         rf_regressor = RandomForestRegressor()
-        grid_search = GridSearchCV(rf_regressor, param_grid, cv=cv, n_jobs=-1, verbose=3)
-        grid_search.fit(self.X_tune, self.y_tune)
+        grid_search = GridSearchCV(rf_regressor, param_grid, cv=cv, n_jobs=4, verbose=2)
+        grid_search.fit(X_train, self.y_train)
         self.best_hyperparameters = grid_search.best_params_
 
-    def fit_with_hyperparameters(self, features, target):
+    def fitted_model(self, features,):
         rf_regressor = RandomForestRegressor(**self.best_hyperparameters)
-        X_train = self.X_train[features]
-        X_test = self.X_test[features]
-        rf_regressor.fit(X_train, self.y_train)
-        features_key = "_".join(features)
+        X_train, y_train = self.get_data('train')
+        X_train = X_train[features]
+        rf_regressor.fit(X_train, y_train,sample_weight=np.exp(X_train['M']))
+        return rf_regressor
+
+    def fit_with_hyperparameters(self, features, target,regressor=None):
+
+        rf_regressor = RandomForestRegressor(**self.best_hyperparameters)
+        X_train, y_train = self.get_data('train')
+        X_train = X_train[features]
+        rf_regressor.fit(X_train, y_train,sample_weight=np.exp(X_train['M']))
+        features_key = "_".join(features) # Convert list of features to a string key
         self.models[features_key] = rf_regressor
 
-        # Calculate R2 score and store it
         y_train_pred = rf_regressor.predict(X_train.values.reshape(-1, len(features)))
+        self.r2_scores[features_key] = {'train_r2': r2_score(y_train, y_train_pred)}
+        self.rmse_scores[features_key] = {'train_rmse': RMSE(y_train, y_train_pred)}
+
+
+        X_test, y_test = self.get_data('test')
+        X_test = X_test[features]
         y_test_pred = rf_regressor.predict(X_test.values.reshape(-1, len(features)))
-        self.r2_scores[features_key] = {
-            'train_r2': r2_score(self.y_train, y_train_pred),
-            'test_r2': r2_score(self.y_test, y_test_pred)
-        }
-        self.rmse_scores[features_key] = {
-            'train_rmse': RMSE(self.y_train, y_train_pred),
-            'test_rmse': RMSE(self.y_test, y_test_pred)
-        }
+        self.r2_scores[features_key]['test_r2'] = r2_score(y_test, y_test_pred)
+        self.rmse_scores[features_key]['test_rmse'] = RMSE(y_test, y_test_pred)
 
     def calculate_scatter(self, features):
-        features_key = "_".join(features)  # Convert list of features to a string key
+        features_key = "_".join(features) 
         rf_regressor = self.models[features_key]
-        X_train = self.X_train[features]
-        X_test = self.X_test[features]
+        X_train, y_train = self.get_data('train')
+        X_test, y_test = self.get_data('test')
+        X_train = X_train[features]
+        X_test = X_test[features]
         # Convert features to a 2D array
         X_train = X_train.values.reshape(-1, len(features))
         X_test = X_test.values.reshape(-1, len(features))
         y_train_pred = rf_regressor.predict(X_train)
         y_test_pred = rf_regressor.predict(X_test)
-        train_scatter = np.sqrt(mean_squared_error(self.y_train, y_train_pred))
-        test_scatter = np.sqrt(mean_squared_error(self.y_test, y_test_pred))
+        train_scatter = np.sqrt(mean_squared_error(y_train, y_train_pred))
+        test_scatter = np.sqrt(mean_squared_error(y_test, y_test_pred))
         return train_scatter, test_scatter
 
     def plot_scatter_statistics(self):
@@ -466,6 +512,37 @@ class RandomForest:
         for i, test_rmse in enumerate(test_rmse_values):
             plt.text(i + 0.4, test_rmse + 0.01, f'{test_rmse:.2f}', ha='center', va='bottom')
 
+        plt.tight_layout()
+        plt.show()
+    def fit_with_hyperparameters_cv(self, features, target, cv=5):
+        rf_regressor = RandomForestRegressor(**self.best_hyperparameters)
+        X_train = self.X_train[features]
+
+        # Using cross_val_score to perform cross-validation
+        cv_scores = cross_val_score(rf_regressor, X_train, self.y_train, cv=cv, scoring='neg_mean_squared_error')
+        rmse_scores = np.sqrt(-cv_scores)  # Convert negative MSE scores to RMSE
+
+        features_key = "_".join(features)
+        self.cvmodels[features_key] = rf_regressor
+
+        # Store cross-validated RMSE scores
+        self.cv_scores[features_key] = {
+            'cv_rmse_mean': np.mean(rmse_scores),
+            'cv_rmse_std': np.std(rmse_scores)
+        }
+
+    def plot_cv_rmse(self):
+        feature_sets = list(self.cvmodels.keys())
+        feature_sets_name = [feature_set.split("_") for feature_set in feature_sets]
+        cv_rmse_means = [self.cv_scores[features]['cv_rmse_mean'] for features in feature_sets]
+        cv_rmse_stds = [self.cv_scores[features]['cv_rmse_std'] for features in feature_sets]
+
+        plt.figure(figsize=(10, 6))
+        plt.errorbar(np.arange(len(feature_sets)), cv_rmse_means, yerr=cv_rmse_stds, fmt='o', capsize=5)
+        plt.xticks(np.arange(len(feature_sets)), feature_sets_name, rotation=45)
+        plt.xlabel('Feature Set')
+        plt.ylabel('CV RMSE')
+        plt.title('Cross-Validated RMSE for Different Feature Sets')
         plt.tight_layout()
         plt.show()
 
