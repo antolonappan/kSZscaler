@@ -28,7 +28,7 @@ class Scaling:
         self.box = box
         self.body = body
         self.z = Magneticum.redshift_snapshot(snap,box)
-        self.h = 0.7
+        self.h = 0.704
 
     @property
     def Mgas(self) -> np.ndarray:
@@ -122,11 +122,21 @@ class Scaling:
         plt.title('Yksz vs M500c')
         plt.plot(M,yfit_log,label=f"$\\alpha$={popt[0]:.2f}",c='r')
         plt.legend()
+
+class photoz:
+    def __init__(self,z):
+        self.z = z
+        self.sigma_z = 0.01*np.exp(self.z/2.5)
+        c = 299792.458 
+        H0 = 71
+        H0_kpc = H0 / 1000
+        dD_dz = c / H0_kpc
+        self.sigma_D = abs(dD_dz * self.sigma_z) * u.kpc
     
 
 class Distribution:
 
-    def __init__(self,ngrid:int,snap:str,box:str='') -> None:
+    def __init__(self,ngrid:int,snap:str,box:str='',zerr:float=0.0) -> None:
         
 
         self.boxmin, self.boxmax,  = 0., 5e5 #in kpc (500Mpc)
@@ -136,16 +146,25 @@ class Distribution:
         self.dataframe_clu = Magneticum(snap,box,'cluster').dataframe
         self.dataframe_gal = Magneticum(snap,box,'galaxies').dataframe
         self.z = Magneticum.redshift_snapshot(snap,box)
+        if zerr == 0.0:
+            self.zerr = 0.0
+        else:
+            random_values = np.random.uniform(-1, 1,len(self.dataframe_gal))
+            self.zerr = zerr*np.where(random_values > 0, 0.9 + 0.1 * random_values, -0.9 + 0.1 * random_values)
     
-    def __get_position__(self,dataframe,dtype):
+    def __get_position__(self,dataframe,dtype,add_zerr=False) -> np.ndarray:
+        if add_zerr:
+            zerr = self.zerr
+        else:
+            zerr = 0.0
         if dtype == pd.DataFrame:
             dataframe = pd.DataFrame.from_dict({'x':dataframe['x[kpc/h]']/self.h,
                                                 'y':dataframe['y[kpc/h]']/self.h,
-                                                'z':dataframe['z[kpc/h]']/self.h,})
+                                                'z':(dataframe['z[kpc/h]']/self.h)+zerr,})
         elif dtype == np.ndarray:
             dataframe = np.vstack((dataframe['x[kpc/h]']/self.h,
                                    dataframe['y[kpc/h]']/self.h,
-                                   dataframe['z[kpc/h]']/self.h))
+                                   (dataframe['z[kpc/h]']/self.h)+zerr))
         else:
             raise ValueError('dtype must be pd.DataFrame or np.ndarray')
         
@@ -156,7 +175,7 @@ class Distribution:
         if body == 'cluster' or body == 'c':
             return self.__get_position__(self.dataframe_clu,np.ndarray)
         elif body == 'galaxies' or body == 'g':
-            return self.__get_position__(self.dataframe_gal,np.ndarray)
+            return self.__get_position__(self.dataframe_gal,np.ndarray,True)
         else:
             raise ValueError('body must be cluster or galaxies')
     
@@ -236,9 +255,9 @@ class Distribution:
 
 class Analysis:
 
-    def __init__(self,grid:int,snap:str,box:str):
+    def __init__(self,grid:int,snap:str,box:str,zerr:float=0.0) -> None:
         self.scaling = Scaling(snap,box,'cluster')
-        self.distribution = Distribution(grid,snap,box)
+        self.distribution = Distribution(grid,snap,box,zerr)
 
     def get_dataframe(self):
         df_c = self.distribution.dataframe_clu
