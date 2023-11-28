@@ -137,8 +137,8 @@ class photoz:
 class Distribution:
 
     def __init__(self,ngrid:int,snap:str,box:str='',zerr:float=0.0) -> None:
+        self.boxsize = (352/0.704)*1000
         
-
         self.boxmin, self.boxmax,  = 0., 5e5 #in kpc (500Mpc)
         self.nbins = ngrid
         self.bin_len = self.boxmax/self.nbins 
@@ -146,25 +146,27 @@ class Distribution:
         self.dataframe_clu = Magneticum(snap,box,'cluster').dataframe
         self.dataframe_gal = Magneticum(snap,box,'galaxies').dataframe
         self.z = Magneticum.redshift_snapshot(snap,box)
-        if zerr == 0.0:
-            self.zerr = 0.0
-        else:
-            random_values = np.random.uniform(-1, 1,len(self.dataframe_gal))
-            self.zerr = zerr*np.where(random_values > 0, 0.9 + 0.1 * random_values, -0.9 + 0.1 * random_values)
+        self.zerr = zerr
+
+    def __add_zerr__(self) -> np.ndarray:
+        z = np.array(self.dataframe_gal['z[kpc/h]'])/self.h
+        z_with_err = np.random.normal(z,self.zerr)
+        z_with_err[z_with_err<0] = z_with_err[z_with_err<0]+self.boxsize
+        z_with_err[z_with_err>self.boxsize] = z_with_err[z_with_err>self.boxsize]-self.boxsize
+        return z_with_err
+
     
     def __get_position__(self,dataframe,dtype,add_zerr=False) -> np.ndarray:
         if add_zerr:
-            zerr = self.zerr
-        else:
-            zerr = 0.0
+            z = self.__add_zerr__()
         if dtype == pd.DataFrame:
             dataframe = pd.DataFrame.from_dict({'x':dataframe['x[kpc/h]']/self.h,
                                                 'y':dataframe['y[kpc/h]']/self.h,
-                                                'z':(dataframe['z[kpc/h]']/self.h)+zerr,})
+                                                'z':dataframe['z[kpc/h]']/self.h if not add_zerr else z})
         elif dtype == np.ndarray:
             dataframe = np.vstack((dataframe['x[kpc/h]']/self.h,
                                    dataframe['y[kpc/h]']/self.h,
-                                   (dataframe['z[kpc/h]']/self.h)+zerr))
+                                   dataframe['z[kpc/h]']/self.h if not add_zerr else z))
         else:
             raise ValueError('dtype must be pd.DataFrame or np.ndarray')
         
