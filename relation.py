@@ -7,7 +7,7 @@ from astropy import units as u
 import astropy.constants as c
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
-import pandas as pd
+import modin.pandas as pd
 from tqdm import tqdm
 from scipy import stats
 from pycachera import cache
