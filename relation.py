@@ -270,6 +270,7 @@ class Analysis:
         df_c['Vz'] = vz
         df_c['Vnet'] = vnet
         df_c['vnet'] = np.sqrt(df_c['vx[km/s]']**2+df_c['vy[km/s]']**2+df_c['vz[km/s]']**2)
+        df_c['vz'] = df_c['vz[km/s]']
         df_c['Mstar'] = self.scaling.Mstar.value
         df_c['Mgas'] = self.scaling.Mgas.value
         df_c['Vlos'] = self.scaling.Vlos.value
