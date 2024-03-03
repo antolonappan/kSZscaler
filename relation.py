@@ -7,10 +7,11 @@ from astropy import units as u
 import astropy.constants as c
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
-import modin.pandas as pd
-from tqdm import tqdm
+try:
+    import modin.pandas as pd
+except:
+    import pandas as pd
 from scipy import stats
-from pycachera import cache
 from astropy.cosmology import WMAP7 as cosmo
 from scipy.interpolate import RegularGridInterpolator
 from scipy.fftpack import fftn, ifftn, fftfreq
