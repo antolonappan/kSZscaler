@@ -1,0 +1,12 @@
+numpy
+pandas
+matplotlib
+scikit-learn
+xgboost
+wget
+gzip
+pickle5  # if you're using enhanced pickling features, otherwise standard library's pickle module doesn't need a separate installation
+astropy
+scipy
+modin[ray]  # assuming you're using Ray as the backend for Modin
+tqdm
