@@ -100,7 +100,7 @@ def V_losVSrec(
     )  # Adjust right margin to leave space for colorbar
 
     assert v_comp in ["z", "net"]
-
+    
     for i, df in enumerate([df1, df2, df3]):
         if v_comp == "z":
             Vnet = df.Vz
