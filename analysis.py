@@ -93,6 +93,8 @@ def V_losVSrec(
     z_arr: List,
     v_comp: str = "z",
     save: Optional[str] = None,
+    ylim: Optional[Tuple] = None,
+    xlim: Optional[Tuple] = None,
 ) -> None:
     fig, axs = plt.subplots(1, 3, figsize=(17, 4))
     plt.subplots_adjust(
@@ -121,9 +123,11 @@ def V_losVSrec(
             axs[i].set_xlabel("$V_{rec}[km/s]$", fontsize=15)
         if i == 0:
             axs[i].set_ylabel("$V_{halo}[km/s]$", fontsize=15)
-        axs[i].set_xlim(None, 2000)
+        if xlim:
+            axs[i].set_xlim(xlim)
         axs[i].axline((0, 0), (1, 1), color="k", linestyle="--")
-        axs[i].set_ylim(None, 1500)
+        if ylim:
+            axs[i].set_ylim(ylim)
         axs[i].set_title(f"$z={z_arr[i]:.2f}$", fontsize=15)
         axs[i].tick_params(labelsize=15)
 

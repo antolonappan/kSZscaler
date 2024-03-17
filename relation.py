@@ -234,7 +234,7 @@ class Distribution:
         f_growth = self.f_growth()
         H0 = cosmo.H0.to("/s").value
         a0 = 1.0 / (1.0 + self.z)
-        bg = 5.0
+        bg = 1.5 #make it 5!
         return -a0 * H0 * f_growth * deltag / bg
 
     def galaxy_nd_fft(self, prefactor=True) -> np.ndarray:
