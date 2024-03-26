@@ -12,7 +12,7 @@ try:
 except:
     import pandas as pd
 from scipy import stats
-from astropy.cosmology import WMAP7 as cosmo
+from astropy.cosmology import WMAP9 as cosmo
 from scipy.interpolate import RegularGridInterpolator
 from scipy.fftpack import fftn, ifftn, fftfreq
 from sklearn.model_selection import train_test_split, GridSearchCV
@@ -154,114 +154,74 @@ class photoz:
 class Distribution:
     def __init__(
         self,
-        ngrid: int,
+        grid_size: int,
         snap: str,
         box: str = "",
         mcut_gal: float = 0.0,
-        zerr: float = 0.0,
+        boxsize: float = 352
     ) -> None:
-        self.boxsize = (352 / 0.704) * 1000
-
-        self.boxmin, self.boxmax, = 0.0, 5e5  # in kpc (500Mpc)
-        self.nbins = ngrid
-        self.bin_len = self.boxmax / self.nbins
-        self.h = 0.704
+        self.grid_size = grid_size
+        self.box_size = boxsize
+        self.num_bins = int(self.box_size / grid_size)
         self.dataframe_clu = Magneticum(snap, box, "cluster").dataframe
         self.dataframe_gal = Magneticum(snap, box, "galaxies", mcut_gal).dataframe
         self.z = Magneticum.redshift_snapshot(snap, box)
-        self.zerr = zerr
 
-    def __add_zerr__(self) -> np.ndarray:
-        z = np.array(self.dataframe_gal["z[kpc/h]"]) / self.h
-        z_with_err = np.random.normal(z, self.zerr)
-        z_with_err[z_with_err < 0] = z_with_err[z_with_err < 0] + self.boxsize
-        z_with_err[z_with_err > self.boxsize] = (
-            z_with_err[z_with_err > self.boxsize] - self.boxsize
-        )
-        return z_with_err
 
-    def __get_position__(self, dataframe, dtype, add_zerr=False) -> np.ndarray:
-        if add_zerr:
-            z = self.__add_zerr__()
-        if dtype == pd.DataFrame:
-            dataframe = pd.DataFrame.from_dict(
-                {
-                    "x": dataframe["x[kpc/h]"] / self.h,
-                    "y": dataframe["y[kpc/h]"] / self.h,
-                    "z": dataframe["z[kpc/h]"] / self.h if not add_zerr else z,
-                }
-            )
-        elif dtype == np.ndarray:
-            dataframe = np.vstack(
-                (
-                    dataframe["x[kpc/h]"] / self.h,
-                    dataframe["y[kpc/h]"] / self.h,
-                    dataframe["z[kpc/h]"] / self.h if not add_zerr else z,
-                )
-            )
-        else:
-            raise ValueError("dtype must be pd.DataFrame or np.ndarray")
-
-        return dataframe
+    def __get_position__(self, dataframe) -> np.ndarray:
+            
+        return dataframe[['x[kpc/h]', 'y[kpc/h]', 'z[kpc/h]']]/1000
 
     def get_postion(self, body: str) -> np.ndarray:
         if body == "cluster" or body == "c":
-            return self.__get_position__(self.dataframe_clu, np.ndarray)
+            return self.__get_position__(self.dataframe_clu)
         elif body == "galaxies" or body == "g":
-            return self.__get_position__(self.dataframe_gal, np.ndarray, True)
+            return self.__get_position__(self.dataframe_gal)
         else:
             raise ValueError("body must be cluster or galaxies")
 
     def galaxy_number_counts(self) -> np.ndarray:
-        binedges = np.linspace(self.boxmin, self.boxmax, self.nbins + 1)
-        bincenters = 0.5 * (binedges[1:] + binedges[:-1])
-        ret = stats.binned_statistic_dd(
-            self.get_postion("g").T, None, "count", bins=[binedges, binedges, binedges]
-        )
-        return ret.statistic
+        binedges =  np.linspace(0, self.box_size, self.num_bins)
+        gala_pos = self.get_postion("g")
+        density, _ = np.histogramdd(gala_pos[['x[kpc/h]', 'y[kpc/h]', 'z[kpc/h]']].values, bins=(binedges, binedges, binedges))
+        return density
 
     def galaxy_number_density(self) -> np.ndarray:
         Ng = self.galaxy_number_counts()
         Ng_m = np.mean(Ng)
         return Ng / Ng_m - 1
 
-    def f_growth(self) -> float:
-        Om = cosmo.Om0
-        Ol = 1.0 - Om
-        return Om ** (4.0 / 7.0) + (1.0 + Om / 2.0) * Ol / 70.0
 
-    def prefactorize(self, deltag) -> float:
-        f_growth = self.f_growth()
-        H0 = cosmo.H0.to("/s").value
-        a0 = 1.0 / (1.0 + self.z)
-        bg = 1.3 #make it 5!
-        return -a0 * H0 * f_growth * deltag / bg
+    def prefactor(self) -> float:
+        bias = 1.3
+        a = 1/(1+self.z)
+        H_a = cosmo.H(self.z)
+        f_omega = cosmo.Om0**.545
+        factor =  (- H_a * f_omega * a).value/bias
+        return factor
 
-    def galaxy_nd_fft(self, prefactor=True) -> np.ndarray:
-        if prefactor:
-            return fftn(self.prefactorize(self.galaxy_number_density()))
-        else:
-            return fftn(self.galaxy_number_density())
+    def galaxy_nd_fft(self) -> np.ndarray:
+        factor = self.prefactor()
+        return fftn(self.galaxy_number_density()) * factor
 
     def k_vectors(self) -> tuple:
-        freq = fftfreq(self.nbins, d=self.bin_len * c.kpc.to("cm").value)
+        freq = fftfreq(self.nbins, d=self.grid_size) * 2 * np.pi
         kx, ky, kz = np.meshgrid(freq, freq, freq, indexing="ij")
         k_squared = kx ** 2 + ky ** 2 + kz ** 2
         k_squared[0, 0, 0] = 1
         return (kx, ky, kz, k_squared)
 
     def velocity_gradient(self, filter=True) -> np.ndarray:
-        kx, ky, kz, k_squared = self.k_vectors()
         deltak = self.galaxy_nd_fft()
-        binedges = np.linspace(self.boxmin, self.boxmax, self.nbins + 1)
+        freqx = fftfreq(deltak.shape[0], d=self.grid_size) * 2 * np.pi
+        freqy = fftfreq(deltak.shape[1], d=self.grid_size) * 2 * np.pi
+        freqz = fftfreq(deltak.shape[2], d=self.grid_size) * 2 * np.pi
+        kx, ky, kz = np.meshgrid(freqx, freqy, freqz, indexing="ij")
+        k_squared = kx ** 2 + ky ** 2 + kz ** 2
+        k_squared[0, 0, 0] = 1
+        binedges =  np.linspace(0, self.box_size, self.num_bins)
         bincenters = 0.5 * (binedges[1:] + binedges[:-1])
-        pos_c = self.get_postion("c").T
-
-        R_filter = 2 * self.bin_len * c.kpc.to("cm").value
-        Wk = np.exp(-(R_filter ** 2) * k_squared / 2.0)
-
-        if filter:
-            deltak = deltak * Wk
+        pos_c = self.get_postion("c").values
 
         momentum_x = deltak * kx / k_squared
         momentum_y = deltak * ky / k_squared
@@ -270,31 +230,32 @@ class Distribution:
         velocity_y = np.real(ifftn(-1j * momentum_y))
         velocity_z = np.real(ifftn(-1j * momentum_z))
 
+        
+
         velocity_x_interpolator = RegularGridInterpolator(
             (bincenters, bincenters, bincenters),
             velocity_x,
             bounds_error=False,
-            fill_value=None,
             method="linear",
         )
+
+        
         velocity_y_interpolator = RegularGridInterpolator(
             (bincenters, bincenters, bincenters),
             velocity_y,
             bounds_error=False,
-            fill_value=None,
             method="linear",
         )
         velocity_z_interpolator = RegularGridInterpolator(
             (bincenters, bincenters, bincenters),
             velocity_z,
             bounds_error=False,
-            fill_value=None,
             method="linear",
         )
 
-        vx = velocity_x_interpolator(pos_c)
-        vy = velocity_y_interpolator(pos_c)
-        vz = velocity_z_interpolator(pos_c)
+        vx = np.nan_to_num(velocity_x_interpolator(pos_c))
+        vy = np.nan_to_num(velocity_y_interpolator(pos_c))
+        vz = np.nan_to_num(velocity_z_interpolator(pos_c))
         vnet = np.sqrt(vx ** 2 + vy ** 2 + vz ** 2)
         return (vx, vy, vz, vnet)
 
@@ -304,7 +265,7 @@ class Analysis:
         self, grid: int, snap: str, box: str, mcut_gal: float = 0.0, zerr: float = 0.0
     ) -> None:
         self.scaling = Scaling(snap, box, "cluster")
-        self.distribution = Distribution(grid, snap, box, mcut_gal, zerr)
+        self.distribution = Distribution(grid, snap, box, mcut_gal)
 
     def get_dataframe(self):
         df_c = self.distribution.dataframe_clu

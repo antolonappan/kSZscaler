@@ -15,7 +15,7 @@ plt.rcParams["xtick.minor.visible"] = True
 def data_manupulation(df: pd.DataFrame) -> pd.DataFrame:
     dff = df.copy()
     dff = dff[["Yksz", "Vz", "Mstar", "M", "Vlos", "Ytsz"]]
-    dff.Vz = dff.Vz.apply(lambda x: x / 1e5)
+    dff.Vz = dff.Vz.apply(lambda x: x/1 )
     dff.Mstar = dff.Mstar.apply(lambda x: np.log(x))
     q_list = [0, 0.5, 0.75, 1]
     labels = [1, 2, 3]
@@ -113,12 +113,12 @@ def V_losVSrec(
         else:
             raise ValueError('v_comp must be either "z" or "net"')
 
-        corr = np.corrcoef(Vnet / 1e5, vnet)[0, 1]
+        corr = np.corrcoef(Vnet, vnet)[0, 1]
         print(f"Correlation at z={z_arr[i]:.2f} is {corr:.2f}")
-        print(np.polyfit(Vnet / 1e5, vnet,1))
+        print(np.polyfit(Vnet, vnet,1))
 
         hb = axs[i].hexbin(
-            Vnet / 1e5, vnet, gridsize=30, cmap="Spectral", bins="log", mincnt=1
+            Vnet, vnet, gridsize=30, cmap="Spectral", bins="log", mincnt=1
         )
         if i == 1:
             axs[i].set_xlabel("$V_{rec}[km/s]$", fontsize=15)
