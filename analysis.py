@@ -115,6 +115,7 @@ def V_losVSrec(
 
         corr = np.corrcoef(Vnet / 1e5, vnet)[0, 1]
         print(f"Correlation at z={z_arr[i]:.2f} is {corr:.2f}")
+        print(np.polyfit(Vnet / 1e5, vnet,1))
 
         hb = axs[i].hexbin(
             Vnet / 1e5, vnet, gridsize=30, cmap="Spectral", bins="log", mincnt=1
